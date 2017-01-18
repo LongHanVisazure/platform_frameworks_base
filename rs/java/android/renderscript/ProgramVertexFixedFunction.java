@@ -17,10 +17,6 @@
 package android.renderscript;
 
 
-import android.graphics.Matrix;
-import android.util.Log;
-
-
 /**
  * @hide
  * @deprecated in API 16
@@ -249,6 +245,9 @@ public class ProgramVertexFixedFunction extends ProgramVertex {
             for(int i = 0; i < 16; i ++) {
                 mIOBuffer.addF32(m.mMat[i]);
             }
+            // Reset the buffer back to the end, since we want to flush all of
+            // the contents back (and not just what we wrote now).
+            mIOBuffer.reset(mIOBuffer.getData().length);
             mAlloc.setFromFieldPacker(0, mIOBuffer);
         }
 

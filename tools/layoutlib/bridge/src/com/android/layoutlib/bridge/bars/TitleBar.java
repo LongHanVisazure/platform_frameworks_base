@@ -16,11 +16,10 @@
 
 package com.android.layoutlib.bridge.bars;
 
-import com.android.resources.Density;
+import com.android.layoutlib.bridge.android.BridgeContext;
 
 import org.xmlpull.v1.XmlPullParserException;
 
-import android.content.Context;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
@@ -28,14 +27,14 @@ public class TitleBar extends CustomBar {
 
     private TextView mTextView;
 
-    public TitleBar(Context context, Density density, String label)
-            throws XmlPullParserException {
-        super(context, density, LinearLayout.HORIZONTAL, "/bars/title_bar.xml", "title_bar.xml");
+    public TitleBar(BridgeContext context, String label, int simulatedPlatformVersion) {
+        super(context, LinearLayout.HORIZONTAL, "/bars/title_bar.xml", "title_bar.xml",
+                simulatedPlatformVersion);
 
         // Cannot access the inside items through id because no R.id values have been
         // created for them.
         // We do know the order though.
-        mTextView = setText(0, label);
+        mTextView = setText(0, label, true);
 
         setStyle("windowTitleBackgroundStyle");
     }

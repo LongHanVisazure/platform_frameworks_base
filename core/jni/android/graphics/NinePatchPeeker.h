@@ -14,35 +14,41 @@
  * limitations under the License.
  */
 
-#ifndef NinePatchPeeker_h
-#define NinePatchPeeker_h
+#ifndef _ANDROID_GRAPHICS_NINE_PATCH_PEEKER_H_
+#define _ANDROID_GRAPHICS_NINE_PATCH_PEEKER_H_
 
-#include "SkImageDecoder.h"
+#include "SkPngChunkReader.h"
 #include <androidfw/ResourceTypes.h>
+
+class SkImageDecoder;
 
 using namespace android;
 
-class NinePatchPeeker : public SkImageDecoder::Peeker {
-    SkImageDecoder* fHost;
+class NinePatchPeeker : public SkPngChunkReader {
 public:
-    NinePatchPeeker(SkImageDecoder* host) {
-        // the host lives longer than we do, so a raw ptr is safe
-        fHost = host;
-        fPatch = NULL;
-        fPatchSize = 0;
-        fLayoutBounds = NULL;
+    NinePatchPeeker()
+            : mPatch(NULL)
+            , mPatchSize(0)
+            , mHasInsets(false)
+            , mOutlineRadius(0)
+            , mOutlineAlpha(0) {
+        memset(mOpticalInsets, 0, 4 * sizeof(int32_t));
+        memset(mOutlineInsets, 0, 4 * sizeof(int32_t));
     }
 
     ~NinePatchPeeker() {
-        free(fPatch);
-        delete fLayoutBounds;
+        free(mPatch);
     }
 
-    Res_png_9patch*  fPatch;
-    size_t fPatchSize;
-    int    *fLayoutBounds;
+    bool readChunk(const char tag[], const void* data, size_t length) override;
 
-    virtual bool peek(const char tag[], const void* data, size_t length);
+    Res_png_9patch* mPatch;
+    size_t mPatchSize;
+    bool mHasInsets;
+    int32_t mOpticalInsets[4];
+    int32_t mOutlineInsets[4];
+    float mOutlineRadius;
+    uint8_t mOutlineAlpha;
 };
 
-#endif // NinePatchPeeker_h
+#endif  // _ANDROID_GRAPHICS_NINE_PATCH_PEEKER_H_

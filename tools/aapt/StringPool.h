@@ -12,7 +12,6 @@
 
 #include <androidfw/ResourceTypes.h>
 #include <utils/String16.h>
-#include <utils/TypeHelpers.h>
 
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -20,13 +19,14 @@
 #include <ctype.h>
 #include <errno.h>
 
-#include <libexpat/expat.h>
-
 using namespace android;
 
 #define PRINT_STRING_METRICS 0
 
-void strcpy16_htod(uint16_t* dst, const uint16_t* src);
+#if __cplusplus >= 201103L
+void strcpy16_htod(char16_t* dst, const char16_t* src);
+#endif
+void strcpy16_htod(uint16_t* dst, const char16_t* src);
 
 void printStringPool(const ResStringPool* pool);
 
@@ -40,7 +40,7 @@ class StringPool
 public:
     struct entry {
         entry() : offset(0) { }
-        entry(const String16& _value) : value(_value), offset(0), hasStyles(false) { }
+        explicit entry(const String16& _value) : value(_value), offset(0), hasStyles(false) { }
         entry(const entry& o) : value(o.value), offset(o.offset),
                 hasStyles(o.hasStyles), indices(o.indices),
                 configTypeName(o.configTypeName), configs(o.configs) { }
@@ -138,7 +138,14 @@ public:
     const Vector<size_t>* offsetsForString(const String16& val) const;
 
 private:
-    static int config_sort(void* state, const void* lhs, const void* rhs);
+    class ConfigSorter
+    {
+    public:
+        explicit ConfigSorter(const StringPool&);
+        bool operator()(size_t l, size_t r);
+    private:
+        const StringPool& pool;
+    };
 
     const bool                              mUTF8;
 
@@ -169,14 +176,6 @@ private:
     // This array maps from the original position a string was placed at
     // in mEntryArray to its new position after being sorted with sortByConfig().
     Vector<size_t>                          mOriginalPosToNewPos;
-};
-
-// The entry types are trivially movable because all fields they contain, including
-// the vectors and strings, are trivially movable.
-namespace android {
-    ANDROID_TRIVIAL_MOVE_TRAIT(StringPool::entry);
-    ANDROID_TRIVIAL_MOVE_TRAIT(StringPool::entry_style_span);
-    ANDROID_TRIVIAL_MOVE_TRAIT(StringPool::entry_style);
 };
 
 #endif

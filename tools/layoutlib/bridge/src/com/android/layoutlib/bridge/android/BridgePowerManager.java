@@ -28,8 +28,18 @@ import android.os.WorkSource;
 public class BridgePowerManager implements IPowerManager {
 
     @Override
-    public boolean isScreenOn() throws RemoteException {
+    public boolean isInteractive() throws RemoteException {
         return true;
+    }
+
+    @Override
+    public boolean isPowerSaveMode() throws RemoteException {
+        return false;
+    }
+
+    @Override
+    public boolean setPowerSaveMode(boolean mode) throws RemoteException {
+        return false;
     }
 
     @Override
@@ -39,7 +49,7 @@ public class BridgePowerManager implements IPowerManager {
     }
 
     @Override
-    public void acquireWakeLock(IBinder arg0, int arg1, String arg2, String arg2_5, WorkSource arg3)
+    public void acquireWakeLock(IBinder arg0, int arg1, String arg2, String arg2_5, WorkSource arg3, String arg4)
             throws RemoteException {
         // pass for now.
     }
@@ -51,12 +61,17 @@ public class BridgePowerManager implements IPowerManager {
     }
 
     @Override
+    public void powerHint(int hintId, int data) {
+        // pass for now.
+    }
+
+    @Override
     public void crash(String arg0) throws RemoteException {
         // pass for now.
     }
 
     @Override
-    public void goToSleep(long arg0, int arg1) throws RemoteException {
+    public void goToSleep(long arg0, int arg1, int arg2) throws RemoteException {
         // pass for now.
     }
 
@@ -71,7 +86,12 @@ public class BridgePowerManager implements IPowerManager {
     }
 
     @Override
-    public void shutdown(boolean confirm, boolean wait) {
+    public void rebootSafeMode(boolean confirm, boolean wait) {
+        // pass for now.
+    }
+
+    @Override
+    public void shutdown(boolean confirm, String reason, boolean wait) {
         // pass for now.
     }
 
@@ -101,17 +121,12 @@ public class BridgePowerManager implements IPowerManager {
     }
 
     @Override
-    public void setMaximumScreenOffTimeoutFromDeviceAdmin(int arg0) throws RemoteException {
-        // pass for now.
-    }
-
-    @Override
     public void setStayOnSetting(int arg0) throws RemoteException {
         // pass for now.
     }
 
     @Override
-    public void updateWakeLockWorkSource(IBinder arg0, WorkSource arg1) throws RemoteException {
+    public void updateWakeLockWorkSource(IBinder arg0, WorkSource arg1, String arg2) throws RemoteException {
         // pass for now.
     }
 
@@ -127,7 +142,27 @@ public class BridgePowerManager implements IPowerManager {
     }
 
     @Override
-    public void wakeUp(long time) throws RemoteException {
+    public void wakeUp(long time, String reason, String opPackageName) throws RemoteException {
         // pass for now.
+    }
+
+    @Override
+    public void boostScreenBrightness(long time) throws RemoteException {
+        // pass for now.
+    }
+
+    @Override
+    public boolean isDeviceIdleMode() throws RemoteException {
+        return false;
+    }
+
+    @Override
+    public boolean isLightDeviceIdleMode() throws RemoteException {
+        return false;
+    }
+
+    @Override
+    public boolean isScreenBrightnessBoosted() throws RemoteException {
+        return false;
     }
 }

@@ -60,12 +60,12 @@ public final class ConsumerIrManager {
         try {
             return mService.hasIrEmitter();
         } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
         }
-        return false;
     }
 
     /**
-     * Tansmit and infrared pattern
+     * Transmit an infrared pattern
      * <p>
      * This method is synchronous; when it returns the pattern has
      * been transmitted. Only patterns shorter than 2 seconds will
@@ -84,7 +84,7 @@ public final class ConsumerIrManager {
         try {
             mService.transmit(mPackageName, carrierFrequency, pattern);
         } catch (RemoteException e) {
-            Log.w(TAG, "failed to transmit.", e);
+            throw e.rethrowFromSystemServer();
         }
     }
 
@@ -149,8 +149,7 @@ public final class ConsumerIrManager {
             }
             return range;
         } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
         }
-        return null;
     }
-
 }

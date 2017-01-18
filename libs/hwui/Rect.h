@@ -14,21 +14,26 @@
  * limitations under the License.
  */
 
-#ifndef ANDROID_HWUI_RECT_H
-#define ANDROID_HWUI_RECT_H
+#pragma once
 
-#include <cmath>
+#include "Vertex.h"
 
 #include <utils/Log.h>
 
-#include "Vertex.h"
+#include <algorithm>
+#include <cmath>
+#include <iomanip>
+#include <ostream>
+#include <SkRect.h>
 
 namespace android {
 namespace uirenderer {
 
-#define RECT_STRING "%7.2f %7.2f %7.2f %7.2f"
+#define RECT_STRING "%5.2f %5.2f %5.2f %5.2f"
 #define RECT_ARGS(r) \
     (r).left, (r).top, (r).right, (r).bottom
+#define SK_RECT_ARGS(r) \
+    (r).left(), (r).top(), (r).right(), (r).bottom()
 
 ///////////////////////////////////////////////////////////////////////////////
 // Structs
@@ -68,6 +73,20 @@ public:
             bottom(height) {
     }
 
+    inline Rect(const SkIRect& rect):  // NOLINT, implicit
+            left(rect.fLeft),
+            top(rect.fTop),
+            right(rect.fRight),
+            bottom(rect.fBottom) {
+    }
+
+    inline Rect(const SkRect& rect):  // NOLINT, implicit
+            left(rect.fLeft),
+            top(rect.fTop),
+            right(rect.fRight),
+            bottom(rect.fBottom) {
+    }
+
     friend int operator==(const Rect& a, const Rect& b) {
         return !memcmp(&a, &b, sizeof(a));
     }
@@ -101,6 +120,10 @@ public:
         set(r.left, r.top, r.right, r.bottom);
     }
 
+    inline void set(const SkIRect& r) {
+        set(r.left(), r.top(), r.right(), r.bottom());
+    }
+
     inline float getWidth() const {
         return right - left;
     }
@@ -110,25 +133,32 @@ public:
     }
 
     bool intersects(float l, float t, float r, float b) const {
-        return !intersectWith(l, t, r, b).isEmpty();
+        float tempLeft = std::max(left, l);
+        float tempTop = std::max(top, t);
+        float tempRight = std::min(right, r);
+        float tempBottom = std::min(bottom, b);
+
+        return ((tempLeft < tempRight) && (tempTop < tempBottom)); // !isEmpty
     }
 
     bool intersects(const Rect& r) const {
         return intersects(r.left, r.top, r.right, r.bottom);
     }
 
-    bool intersect(float l, float t, float r, float b) {
-        Rect tmp(l, t, r, b);
-        intersectWith(tmp);
-        if (!tmp.isEmpty()) {
-            set(tmp);
-            return true;
-        }
-        return false;
+    /**
+     * This method is named 'doIntersect' instead of 'intersect' so as not to be confused with
+     * SkRect::intersect / android.graphics.Rect#intersect behavior, which do not modify the object
+     * if the intersection of the rects would be empty.
+     */
+    void doIntersect(float l, float t, float r, float b) {
+        left = std::max(left, l);
+        top = std::max(top, t);
+        right = std::min(right, r);
+        bottom = std::min(bottom, b);
     }
 
-    bool intersect(const Rect& r) {
-        return intersect(r.left, r.top, r.right, r.bottom);
+    void doIntersect(const Rect& r) {
+        doIntersect(r.left, r.top, r.right, r.bottom);
     }
 
     inline bool contains(float l, float t, float r, float b) const {
@@ -165,11 +195,22 @@ public:
         bottom += dy;
     }
 
+    void inset(float delta) {
+        outset(-delta);
+    }
+
     void outset(float delta) {
         left -= delta;
         top -= delta;
         right += delta;
         bottom += delta;
+    }
+
+    void outset(float xdelta, float ydelta) {
+        left -= xdelta;
+        top -= ydelta;
+        right += xdelta;
+        bottom += ydelta;
     }
 
     /**
@@ -190,19 +231,19 @@ public:
              * from this inset will only incur similarly small errors in output, due to transparency
              * in extreme outside of the geometry.
              */
-            left = floorf(left + Vertex::gGeometryFudgeFactor);
-            top = floorf(top + Vertex::gGeometryFudgeFactor);
-            right = ceilf(right - Vertex::gGeometryFudgeFactor);
-            bottom = ceilf(bottom - Vertex::gGeometryFudgeFactor);
+            left = floorf(left + Vertex::GeometryFudgeFactor());
+            top = floorf(top + Vertex::GeometryFudgeFactor());
+            right = ceilf(right - Vertex::GeometryFudgeFactor());
+            bottom = ceilf(bottom - Vertex::GeometryFudgeFactor());
         } else {
             /* For other geometry, we do the regular rounding in order to snap, but also outset the
              * bounds by a fudge factor. This ensures that ambiguous geometry (e.g. a non-AA Rect
              * with top left at (0.5, 0.5)) will err on the side of a larger damage rect.
              */
-            left = floorf(left + 0.5f - Vertex::gGeometryFudgeFactor);
-            top = floorf(top + 0.5f - Vertex::gGeometryFudgeFactor);
-            right = floorf(right + 0.5f + Vertex::gGeometryFudgeFactor);
-            bottom = floorf(bottom + 0.5f + Vertex::gGeometryFudgeFactor);
+            left = floorf(left + 0.5f - Vertex::GeometryFudgeFactor());
+            top = floorf(top + 0.5f - Vertex::GeometryFudgeFactor());
+            right = floorf(right + 0.5f + Vertex::GeometryFudgeFactor());
+            bottom = floorf(bottom + 0.5f + Vertex::GeometryFudgeFactor());
         }
     }
 
@@ -213,30 +254,60 @@ public:
         bottom = floorf(bottom + 0.5f);
     }
 
-    void dump() const {
-        ALOGD("Rect[l=%f t=%f r=%f b=%f]", left, top, right, bottom);
+    void roundOut() {
+        left = floorf(left);
+        top = floorf(top);
+        right = ceilf(right);
+        bottom = ceilf(bottom);
     }
 
-private:
-    void intersectWith(Rect& tmp) const {
-        tmp.left = fmaxf(left, tmp.left);
-        tmp.top = fmaxf(top, tmp.top);
-        tmp.right = fminf(right, tmp.right);
-        tmp.bottom = fminf(bottom, tmp.bottom);
+    /*
+     * Similar to unionWith, except this makes the assumption that both rects are non-empty
+     * to avoid both emptiness checks.
+     */
+    void expandToCover(const Rect& other) {
+        left = std::min(left, other.left);
+        top = std::min(top, other.top);
+        right = std::max(right, other.right);
+        bottom = std::max(bottom, other.bottom);
     }
 
-    Rect intersectWith(float l, float t, float r, float b) const {
-        Rect tmp;
-        tmp.left = fmaxf(left, l);
-        tmp.top = fmaxf(top, t);
-        tmp.right = fminf(right, r);
-        tmp.bottom = fminf(bottom, b);
-        return tmp;
+    void expandToCover(float x, float y) {
+        left = std::min(left, x);
+        top = std::min(top, y);
+        right = std::max(right, x);
+        bottom = std::max(bottom, y);
     }
 
+    SkRect toSkRect() const {
+        return SkRect::MakeLTRB(left, top, right, bottom);
+    }
+
+    SkIRect toSkIRect() const {
+        return SkIRect::MakeLTRB(left, top, right, bottom);
+    }
+
+    void dump(const char* label = nullptr) const {
+        ALOGD("%s[l=%.2f t=%.2f r=%.2f b=%.2f]", label ? label : "Rect", left, top, right, bottom);
+    }
+
+    friend std::ostream& operator<<(std::ostream& os, const Rect& rect) {
+        if (rect.isEmpty()) {
+            // Print empty, but continue, since empty rects may still have useful coordinate info
+            os << "(empty)";
+        }
+
+        if (rect.left == 0 && rect.top == 0) {
+            return os << "[" << rect.right << " x " << rect.bottom << "]";
+        }
+
+        return os << "[" << rect.left
+                << " " << rect.top
+                << " " << rect.right
+                << " " << rect.bottom << "]";
+    }
 }; // class Rect
 
 }; // namespace uirenderer
 }; // namespace android
 
-#endif // ANDROID_HWUI_RECT_H

@@ -16,14 +16,15 @@
 
 package android.content.res;
 
+import com.android.ide.common.rendering.api.AssetRepository;
 import com.android.layoutlib.bridge.Bridge;
-
-import android.content.res.AssetManager;
 
 public class BridgeAssetManager extends AssetManager {
 
+    private AssetRepository mAssetRepository;
+
     /**
-     * This initializes the static field {@link AssetManager#mSystem} which is used
+     * This initializes the static field {@link AssetManager#sSystem} which is used
      * by methods who get a global asset manager using {@link AssetManager#getSystem()}.
      * <p/>
      * They will end up using our bridge asset manager.
@@ -35,7 +36,7 @@ public class BridgeAssetManager extends AssetManager {
             // Note that AssetManager() creates a system AssetManager and we override it
             // with our BridgeAssetManager.
             AssetManager.sSystem = new BridgeAssetManager();
-            AssetManager.sSystem.makeStringBlocks(false);
+            AssetManager.sSystem.makeStringBlocks(null);
         }
         return AssetManager.sSystem;
     }
@@ -48,6 +49,14 @@ public class BridgeAssetManager extends AssetManager {
         AssetManager.sSystem = null;
     }
 
-    private BridgeAssetManager() {
+    public void setAssetRepository(AssetRepository assetRepository) {
+        mAssetRepository = assetRepository;
+    }
+
+    public AssetRepository getAssetRepository() {
+        return mAssetRepository;
+    }
+
+    public BridgeAssetManager() {
     }
 }

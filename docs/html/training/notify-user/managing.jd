@@ -1,10 +1,8 @@
 page.title=Updating Notifications
-parent.title=Notifying the User
-parent.link=index.html
+page.tags=notifications
+helpoutsWidget=true
 
 trainingnavtop=true
-next.title=Creating Expanded Notifications
-next.link=expanded.html
 
 @jd:body
 
@@ -31,7 +29,7 @@ next.link=expanded.html
         </a>
     </li>
     <li>
-        <a href="{@docRoot}design/patterns/notifications.html">Notifications</a> Design Guide
+        <a href="https://material.google.com/patterns/notifications.html">Notifications</a> Design Guide
     </li>
 </ul>
 

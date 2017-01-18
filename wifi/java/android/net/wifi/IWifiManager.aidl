@@ -16,14 +16,20 @@
 
 package android.net.wifi;
 
-import android.net.wifi.BatchedScanResult;
-import android.net.wifi.BatchedScanSettings;
+import android.net.wifi.hotspot2.PasspointConfiguration;
 import android.net.wifi.WifiConfiguration;
 import android.net.wifi.WifiInfo;
+import android.net.wifi.ScanSettings;
 import android.net.wifi.ScanResult;
+import android.net.wifi.PasspointManagementObjectDefinition;
+import android.net.wifi.WifiConnectionStatistics;
+import android.net.wifi.WifiActivityEnergyInfo;
+import android.net.Network;
+
 import android.net.DhcpInfo;
 
 import android.os.Messenger;
+import android.os.ResultReceiver;
 import android.os.WorkSource;
 
 /**
@@ -33,9 +39,37 @@ import android.os.WorkSource;
  */
 interface IWifiManager
 {
+    int getSupportedFeatures();
+
+    WifiActivityEnergyInfo reportActivityInfo();
+
+    /**
+     * Requests the controller activity info asynchronously.
+     * The implementor is expected to reply with the
+     * {@link android.net.wifi.WifiActivityEnergyInfo} object placed into the Bundle with the key
+     * {@link android.os.BatteryStats#RESULT_RECEIVER_CONTROLLER_KEY}. The result code is ignored.
+     */
+    oneway void requestActivityInfo(in ResultReceiver result);
+
     List<WifiConfiguration> getConfiguredNetworks();
 
+    List<WifiConfiguration> getPrivilegedConfiguredNetworks();
+
+    WifiConfiguration getMatchingWifiConfig(in ScanResult scanResult);
+
     int addOrUpdateNetwork(in WifiConfiguration config);
+
+    boolean addOrUpdatePasspointConfiguration(in PasspointConfiguration config);
+
+    boolean removePasspointConfiguration(in String fqdn);
+
+    List<PasspointConfiguration> getPasspointConfigurations();
+
+    void queryPasspointIcon(long bssid, String fileName);
+
+    int matchProviderWithCurrentNetwork(String fqdn);
+
+    void deauthenticateNetwork(long holdoff, boolean ess);
 
     boolean removeNetwork(int netId);
 
@@ -45,7 +79,7 @@ interface IWifiManager
 
     boolean pingSupplicant();
 
-    void startScan(in WorkSource ws);
+    void startScan(in ScanSettings requested, in WorkSource ws);
 
     List<ScanResult> getScanResults(String callingPackage);
 
@@ -57,15 +91,13 @@ interface IWifiManager
 
     WifiInfo getConnectionInfo();
 
-    boolean setWifiEnabled(boolean enable);
+    boolean setWifiEnabled(String packageName, boolean enable);
 
     int getWifiEnabledState();
 
     void setCountryCode(String country, boolean persist);
 
-    void setFrequencyBand(int band, boolean persist);
-
-    int getFrequencyBand();
+    String getCountryCode();
 
     boolean isDualBandSupported();
 
@@ -97,34 +129,41 @@ interface IWifiManager
 
     void setWifiApConfiguration(in WifiConfiguration wifiConfig);
 
-    void startWifi();
-
-    void stopWifi();
-
-    void addToBlacklist(String bssid);
-
-    void clearBlacklist();
-
     Messenger getWifiServiceMessenger();
-
-    Messenger getWifiStateMachineMessenger();
-
-    String getConfigFile();
-
-    void captivePortalCheckComplete();
 
     void enableTdls(String remoteIPAddress, boolean enable);
 
     void enableTdlsWithMacAddress(String remoteMacAddress, boolean enable);
 
-    boolean requestBatchedScan(in BatchedScanSettings requested, IBinder binder, in WorkSource ws);
+    String getWpsNfcConfigurationToken(int netId);
 
-    void stopBatchedScan(in BatchedScanSettings requested);
+    void enableVerboseLogging(int verbose);
 
-    List<BatchedScanResult> getBatchedScanResults(String callingPackage);
+    int getVerboseLoggingLevel();
 
-    boolean isBatchedScanSupported();
+    void enableAggressiveHandover(int enabled);
+    int getAggressiveHandover();
 
-    void pollBatchedScan();
+    void setAllowScansWithTraffic(int enabled);
+    int getAllowScansWithTraffic();
+
+    boolean setEnableAutoJoinWhenAssociated(boolean enabled);
+    boolean getEnableAutoJoinWhenAssociated();
+
+    void enableWifiConnectivityManager(boolean enabled);
+
+    WifiConnectionStatistics getConnectionStatistics();
+
+    void disableEphemeralNetwork(String SSID);
+
+    void factoryReset();
+
+    Network getCurrentNetwork();
+
+    byte[] retrieveBackupData();
+
+    void restoreBackupData(in byte[] data);
+
+    void restoreSupplicantBackupData(in byte[] supplicantData, in byte[] ipConfigData);
 }
 

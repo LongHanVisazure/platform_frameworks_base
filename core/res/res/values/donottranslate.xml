@@ -18,8 +18,6 @@
 */
 -->
 <resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
-    <!-- Default text encoding for WebSettings. -->
-    <string name="default_text_encoding">Latin-1</string>
     <!-- @hide DO NOT TRANSLATE. Workaround for resource race condition in lockscreen. -->
     <bool name="lockscreen_isPortrait">true</bool>
     <!-- @hide DO NOT TRANSLATE. Control aspect ratio of lock pattern -->
@@ -28,4 +26,7 @@
     <string name="icu_abbrev_wday_month_day_no_year">eeeMMMMd</string>
     <!-- @hide DO NOT TRANSLATE. date formatting pattern for system ui.-->
     <string name="system_ui_date_pattern">@string/icu_abbrev_wday_month_day_no_year</string>
+    <!-- @hide DO NOT TRANSLATE Spans within this text are applied to style composing regions
+    within an EditText widget. The text content is ignored and not used. -->
+    <string name="candidates_style" translatable="false"><u>candidates</u></string>
 </resources>

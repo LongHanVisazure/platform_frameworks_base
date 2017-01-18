@@ -21,22 +21,26 @@
 #include <assert.h>
 #include <utils/Log.h>
 #include <utils/threads.h>
-#include <core/SkBitmap.h>
+#include <SkBitmap.h>
+#include <media/IMediaHTTPService.h>
 #include <media/mediametadataretriever.h>
+#include <media/mediascanner.h>
 #include <private/media/VideoFrame.h>
 
 #include "jni.h"
 #include "JNIHelp.h"
 #include "android_runtime/AndroidRuntime.h"
+#include "android_media_MediaDataSource.h"
 #include "android_media_Utils.h"
+#include "android_util_Binder.h"
 
+#include "android/graphics/GraphicsJNI.h"
 
 using namespace android;
 
 struct fields_t {
     jfieldID context;
     jclass bitmapClazz;  // Must be a global ref
-    jfieldID nativeBitmap;
     jmethodID createBitmapMethod;
     jmethodID createScaledBitmapMethod;
     jclass configClazz;  // Must be a global ref
@@ -74,13 +78,12 @@ static MediaMetadataRetriever* getRetriever(JNIEnv* env, jobject thiz)
 static void setRetriever(JNIEnv* env, jobject thiz, MediaMetadataRetriever* retriever)
 {
     // No lock is needed, since it is called internally by other methods that are protected
-    MediaMetadataRetriever *old = (MediaMetadataRetriever*) env->GetLongField(thiz, fields.context);
     env->SetLongField(thiz, fields.context, (jlong) retriever);
 }
 
 static void
 android_media_MediaMetadataRetriever_setDataSourceAndHeaders(
-        JNIEnv *env, jobject thiz, jstring path,
+        JNIEnv *env, jobject thiz, jobject httpServiceBinderObj, jstring path,
         jobjectArray keys, jobjectArray values) {
 
     ALOGV("setDataSource");
@@ -122,10 +125,19 @@ android_media_MediaMetadataRetriever_setDataSourceAndHeaders(
             env, keys, values, &headersVector)) {
         return;
     }
+
+    sp<IMediaHTTPService> httpService;
+    if (httpServiceBinderObj != NULL) {
+        sp<IBinder> binder = ibinderForJavaObject(env, httpServiceBinderObj);
+        httpService = interface_cast<IMediaHTTPService>(binder);
+    }
+
     process_media_retriever_call(
             env,
             retriever->setDataSource(
-                pathStr.string(), headersVector.size() > 0 ? &headersVector : NULL),
+                httpService,
+                pathStr.string(),
+                headersVector.size() > 0 ? &headersVector : NULL),
 
             "java/lang/RuntimeException",
             "setDataSource failed");
@@ -158,6 +170,23 @@ static void android_media_MediaMetadataRetriever_setDataSourceFD(JNIEnv *env, jo
         return;
     }
     process_media_retriever_call(env, retriever->setDataSource(fd, offset, length), "java/lang/RuntimeException", "setDataSource failed");
+}
+
+static void android_media_MediaMetadataRetriever_setDataSourceCallback(JNIEnv *env, jobject thiz, jobject dataSource)
+{
+    ALOGV("setDataSourceCallback");
+    MediaMetadataRetriever* retriever = getRetriever(env, thiz);
+    if (retriever == 0) {
+        jniThrowException(env, "java/lang/IllegalStateException", "No retriever available");
+        return;
+    }
+    if (dataSource == NULL) {
+        jniThrowException(env, "java/lang/IllegalArgumentException", NULL);
+        return;
+    }
+
+    sp<IDataSource> callbackDataSource = new JMediaDataSource(env, dataSource);
+    process_media_retriever_call(env, retriever->setDataSource(callbackDataSource), "java/lang/RuntimeException", "setDataSourceCallback failed");
 }
 
 template<typename T>
@@ -217,7 +246,7 @@ static void rotate(T *dst, const T *src, size_t width, size_t height, int angle)
 
 static jobject android_media_MediaMetadataRetriever_getFrameAtTime(JNIEnv *env, jobject thiz, jlong timeUs, jint option)
 {
-    ALOGV("getFrameAtTime: %lld us option: %d", timeUs, option);
+    ALOGV("getFrameAtTime: %lld us option: %d", (long long)timeUs, option);
     MediaMetadataRetriever* retriever = getRetriever(env, thiz);
     if (retriever == 0) {
         jniThrowException(env, "java/lang/IllegalStateException", "No retriever available");
@@ -243,7 +272,7 @@ static jobject android_media_MediaMetadataRetriever_getFrameAtTime(JNIEnv *env, 
     jobject config = env->CallStaticObjectMethod(
                         fields.configClazz,
                         fields.createConfigMethod,
-                        SkBitmap::kRGB_565_Config);
+                        GraphicsJNI::colorTypeToLegacyBitmapConfig(kRGB_565_SkColorType));
 
     uint32_t width, height;
     bool swapWidthAndHeight = false;
@@ -270,16 +299,16 @@ static jobject android_media_MediaMetadataRetriever_getFrameAtTime(JNIEnv *env, 
         return NULL;
     }
 
-    SkBitmap *bitmap =
-            (SkBitmap *) env->GetLongField(jBitmap, fields.nativeBitmap);
+    SkBitmap bitmap;
+    GraphicsJNI::getSkBitmap(env, jBitmap, &bitmap);
 
-    bitmap->lockPixels();
-    rotate((uint16_t*)bitmap->getPixels(),
+    bitmap.lockPixels();
+    rotate((uint16_t*)bitmap.getPixels(),
            (uint16_t*)((char*)videoFrame + sizeof(VideoFrame)),
            videoFrame->mWidth,
            videoFrame->mHeight,
            videoFrame->mRotationAngle);
-    bitmap->unlockPixels();
+    bitmap.unlockPixels();
 
     if (videoFrame->mDisplayWidth  != videoFrame->mWidth ||
         videoFrame->mDisplayHeight != videoFrame->mHeight) {
@@ -326,17 +355,13 @@ static jbyteArray android_media_MediaMetadataRetriever_getEmbeddedPicture(
         return NULL;
     }
 
-    unsigned int len = mediaAlbumArt->mSize;
-    char* data = (char*) mediaAlbumArt + sizeof(MediaAlbumArt);
-    jbyteArray array = env->NewByteArray(len);
+    jbyteArray array = env->NewByteArray(mediaAlbumArt->size());
     if (!array) {  // OutOfMemoryError exception has already been thrown.
         ALOGE("getEmbeddedPicture: OutOfMemoryError is thrown.");
     } else {
-        jbyte* bytes = env->GetByteArrayElements(array, NULL);
-        if (bytes != NULL) {
-            memcpy(bytes, data, len);
-            env->ReleaseByteArrayElements(array, bytes, 0);
-        }
+        const jbyte* data =
+                reinterpret_cast<const jbyte*>(mediaAlbumArt->data());
+        env->SetByteArrayRegion(array, 0, mediaAlbumArt->size(), data);
     }
 
     // No need to delete mediaAlbumArt here
@@ -413,10 +438,6 @@ static void android_media_MediaMetadataRetriever_native_init(JNIEnv *env)
     if (fields.createScaledBitmapMethod == NULL) {
         return;
     }
-    fields.nativeBitmap = env->GetFieldID(fields.bitmapClazz, "mNativeBitmap", "J");
-    if (fields.nativeBitmap == NULL) {
-        return;
-    }
 
     jclass configClazz = env->FindClass("android/graphics/Bitmap$Config");
     if (configClazz == NULL) {
@@ -446,14 +467,15 @@ static void android_media_MediaMetadataRetriever_native_setup(JNIEnv *env, jobje
 }
 
 // JNI mapping between Java methods and native methods
-static JNINativeMethod nativeMethods[] = {
+static const JNINativeMethod nativeMethods[] = {
         {
             "_setDataSource",
-            "(Ljava/lang/String;[Ljava/lang/String;[Ljava/lang/String;)V",
+            "(Landroid/os/IBinder;Ljava/lang/String;[Ljava/lang/String;[Ljava/lang/String;)V",
             (void *)android_media_MediaMetadataRetriever_setDataSourceAndHeaders
         },
 
         {"setDataSource",   "(Ljava/io/FileDescriptor;JJ)V", (void *)android_media_MediaMetadataRetriever_setDataSourceFD},
+        {"_setDataSource",   "(Landroid/media/MediaDataSource;)V", (void *)android_media_MediaMetadataRetriever_setDataSourceCallback},
         {"_getFrameAtTime", "(JI)Landroid/graphics/Bitmap;", (void *)android_media_MediaMetadataRetriever_getFrameAtTime},
         {"extractMetadata", "(I)Ljava/lang/String;", (void *)android_media_MediaMetadataRetriever_extractMetadata},
         {"getEmbeddedPicture", "(I)[B", (void *)android_media_MediaMetadataRetriever_getEmbeddedPicture},

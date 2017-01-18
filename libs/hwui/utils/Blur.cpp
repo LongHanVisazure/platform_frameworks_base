@@ -14,16 +14,53 @@
  * limitations under the License.
  */
 
-#define LOG_TAG "OpenGLRenderer"
-
 #include <math.h>
 
 #include "Blur.h"
+#include "MathUtils.h"
 
 namespace android {
 namespace uirenderer {
 
-void Blur::generateGaussianWeights(float* weights, int32_t radius) {
+// This constant approximates the scaling done in the software path's
+// "high quality" mode, in SkBlurMask::Blur() (1 / sqrt(3)).
+static const float BLUR_SIGMA_SCALE = 0.57735f;
+
+float Blur::convertRadiusToSigma(float radius) {
+    return radius > 0 ? BLUR_SIGMA_SCALE * radius + 0.5f : 0.0f;
+}
+
+float Blur::convertSigmaToRadius(float sigma) {
+    return sigma > 0.5f ? (sigma - 0.5f) / BLUR_SIGMA_SCALE : 0.0f;
+}
+
+// if the original radius was on an integer boundary and the resulting radius
+// is within the conversion error tolerance then we attempt to snap to the
+// original integer boundary.
+uint32_t Blur::convertRadiusToInt(float radius) {
+    const float radiusCeil  = ceilf(radius);
+    if (MathUtils::areEqual(radiusCeil, radius)) {
+        return radiusCeil;
+    }
+    return radius;
+}
+
+/**
+ * HWUI has used a slightly different equation than Skia to generate the value
+ * for sigma and to preserve compatibility we have kept that logic.
+ *
+ * Based on some experimental radius and sigma values we approximate the
+ * equation sigma = f(radius) as sigma = radius * 0.3  + 0.6.  The larger the
+ * radius gets, the more our gaussian blur will resemble a box blur since with
+ * large sigma the gaussian curve begins to lose its shape.
+ */
+static float legacyConvertRadiusToSigma(float radius) {
+    return radius > 0 ? 0.3f * radius + 0.6f : 0.0f;
+}
+
+void Blur::generateGaussianWeights(float* weights, float radius) {
+    int32_t intRadius = convertRadiusToInt(radius);
+
     // Compute gaussian weights for the blur
     // e is the euler's number
     static float e = 2.718281828459045f;
@@ -31,13 +68,7 @@ void Blur::generateGaussianWeights(float* weights, int32_t radius) {
     // g(x) = ( 1 / sqrt( 2 * pi ) * sigma) * e ^ ( -x^2 / 2 * sigma^2 )
     // x is of the form [-radius .. 0 .. radius]
     // and sigma varies with radius.
-    // Based on some experimental radius values and sigma's
-    // we approximately fit sigma = f(radius) as
-    // sigma = radius * 0.3  + 0.6
-    // The larger the radius gets, the more our gaussian blur
-    // will resemble a box blur since with large sigma
-    // the gaussian curve begins to lose its shape
-    float sigma = 0.3f * (float) radius + 0.6f;
+    float sigma = legacyConvertRadiusToSigma(radius);
 
     // Now compute the coefficints
     // We will store some redundant values to save some math during
@@ -47,16 +78,16 @@ void Blur::generateGaussianWeights(float* weights, int32_t radius) {
     float coeff2 = - 1.0f / (2.0f * sigma * sigma);
 
     float normalizeFactor = 0.0f;
-    for (int32_t r = -radius; r <= radius; r ++) {
+    for (int32_t r = -intRadius; r <= intRadius; r ++) {
         float floatR = (float) r;
-        weights[r + radius] = coeff1 * pow(e, floatR * floatR * coeff2);
-        normalizeFactor += weights[r + radius];
+        weights[r + intRadius] = coeff1 * pow(e, floatR * floatR * coeff2);
+        normalizeFactor += weights[r + intRadius];
     }
 
     //Now we need to normalize the weights because all our coefficients need to add up to one
     normalizeFactor = 1.0f / normalizeFactor;
-    for (int32_t r = -radius; r <= radius; r ++) {
-        weights[r + radius] *= normalizeFactor;
+    for (int32_t r = -intRadius; r <= intRadius; r ++) {
+        weights[r + intRadius] *= normalizeFactor;
     }
 }
 

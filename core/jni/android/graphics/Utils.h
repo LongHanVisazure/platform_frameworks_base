@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-#ifndef UTILS_DEFINED
-#define UTILS_DEFINED
+#ifndef _ANDROID_GRAPHICS_UTILS_H_
+#define _ANDROID_GRAPHICS_UTILS_H_
 
 #include "SkStream.h"
 
@@ -28,7 +28,8 @@ namespace android {
 
 class AssetStreamAdaptor : public SkStreamRewindable {
 public:
-    AssetStreamAdaptor(Asset* a) : fAsset(a) {}
+    explicit AssetStreamAdaptor(Asset*);
+
     virtual bool rewind();
     virtual size_t read(void* buffer, size_t size);
     virtual bool hasLength() const { return true; }
@@ -37,7 +38,7 @@ public:
 
     virtual SkStreamRewindable* duplicate() const;
 private:
-    Asset*  fAsset;
+    Asset* fAsset;
 };
 
 /**
@@ -52,7 +53,7 @@ SkMemoryStream* CopyAssetToStream(Asset*);
  */
 class AutoFDSeek {
 public:
-    AutoFDSeek(int fd) : fFD(fd) {
+    explicit AutoFDSeek(int fd) : fFD(fd) {
         fCurr = ::lseek(fd, 0, SEEK_CUR);
     }
     ~AutoFDSeek() {
@@ -67,6 +68,10 @@ private:
 
 jobject nullObjectReturn(const char msg[]);
 
+/** Check if the file descriptor is seekable.
+ */
+bool isSeekable(int descriptor);
+
 }; // namespace android
 
-#endif
+#endif  // _ANDROID_GRAPHICS_UTILS_H_

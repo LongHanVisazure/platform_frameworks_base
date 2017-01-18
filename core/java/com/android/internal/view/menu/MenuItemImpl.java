@@ -149,7 +149,7 @@ public final class MenuItemImpl implements MenuItem {
             return true;
         }
 
-        if (mMenu.dispatchMenuItemSelected(mMenu.getRootMenu(), this)) {
+        if (mMenu.dispatchMenuItemSelected(mMenu, this)) {
             return true;
         }
 
@@ -385,7 +385,7 @@ public final class MenuItemImpl implements MenuItem {
         }
 
         if (mIconResId != NO_ICON) {
-            Drawable icon =  mMenu.getResources().getDrawable(mIconResId);
+            Drawable icon =  mMenu.getContext().getDrawable(mIconResId);
             mIconResId = NO_ICON;
             mIconDrawable = icon;
             return icon;
@@ -496,7 +496,7 @@ public final class MenuItemImpl implements MenuItem {
     
     @Override
     public String toString() {
-        return mTitle.toString();
+        return mTitle != null ? mTitle.toString() : null;
     }
 
     void setMenuInfo(ContextMenuInfo menuInfo) {
@@ -593,7 +593,7 @@ public final class MenuItemImpl implements MenuItem {
 
     public MenuItem setActionProvider(ActionProvider actionProvider) {
         if (mActionProvider != null) {
-            mActionProvider.setVisibilityListener(null);
+            mActionProvider.reset();
         }
         mActionView = null;
         mActionProvider = actionProvider;

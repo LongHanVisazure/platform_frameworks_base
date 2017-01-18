@@ -17,6 +17,7 @@
 package com.android.tools.layoutlib.create;
 
 import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.FieldVisitor;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 
@@ -32,14 +33,15 @@ public class DelegateClassAdapter extends ClassVisitor {
 
     /** Suffix added to original methods. */
     private static final String ORIGINAL_SUFFIX = "_Original";
-    private static String CONSTRUCTOR = "<init>";
-    private static String CLASS_INIT = "<clinit>";
+    private static final String CONSTRUCTOR = "<init>";
+    private static final String CLASS_INIT = "<clinit>";
 
-    public final static String ALL_NATIVES = "<<all_natives>>";
+    public static final String ALL_NATIVES = "<<all_natives>>";
 
     private final String mClassName;
     private final Set<String> mDelegateMethods;
     private final Log mLog;
+    private boolean mIsStaticInnerClass;
 
     /**
      * Creates a new {@link DelegateClassAdapter} that can transform some methods
@@ -58,39 +60,50 @@ public class DelegateClassAdapter extends ClassVisitor {
             ClassVisitor cv,
             String className,
             Set<String> delegateMethods) {
-        super(Opcodes.ASM4, cv);
+        super(Main.ASM_VERSION, cv);
         mLog = log;
         mClassName = className;
         mDelegateMethods = delegateMethods;
+        // If this is an inner class, by default, we assume it's static. If it's not we will detect
+        // by looking at the fields (see visitField)
+        mIsStaticInnerClass = className.contains("$");
     }
 
     //----------------------------------
     // Methods from the ClassAdapter
 
     @Override
+    public FieldVisitor visitField(int access, String name, String desc, String signature,
+            Object value) {
+        if (mIsStaticInnerClass && "this$0".equals(name)) {
+            // Having a "this$0" field, proves that this class is not a static inner class.
+            mIsStaticInnerClass = false;
+        }
+
+        return super.visitField(access, name, desc, signature, value);
+    }
+
+    @Override
     public MethodVisitor visitMethod(int access, String name, String desc,
             String signature, String[] exceptions) {
 
-        boolean isStatic = (access & Opcodes.ACC_STATIC) != 0;
+        boolean isStaticMethod = (access & Opcodes.ACC_STATIC) != 0;
         boolean isNative = (access & Opcodes.ACC_NATIVE) != 0;
 
         boolean useDelegate = (isNative && mDelegateMethods.contains(ALL_NATIVES)) ||
                               mDelegateMethods.contains(name);
 
         if (!useDelegate) {
-            // Not creating a delegate for this method, pass it as-is from the reader
-            // to the writer.
+            // Not creating a delegate for this method, pass it as-is from the reader to the writer.
             return super.visitMethod(access, name, desc, signature, exceptions);
         }
 
-        if (useDelegate) {
-            if (CONSTRUCTOR.equals(name) || CLASS_INIT.equals(name)) {
-                // We don't currently support generating delegates for constructors.
-                throw new UnsupportedOperationException(
-                    String.format(
-                        "Delegate doesn't support overriding constructor %1$s:%2$s(%3$s)",  //$NON-NLS-1$
-                        mClassName, name, desc));
-            }
+        if (CONSTRUCTOR.equals(name) || CLASS_INIT.equals(name)) {
+            // We don't currently support generating delegates for constructors.
+            throw new UnsupportedOperationException(
+                String.format(
+                    "Delegate doesn't support overriding constructor %1$s:%2$s(%3$s)",  //$NON-NLS-1$
+                    mClassName, name, desc));
         }
 
         if (isNative) {
@@ -98,8 +111,9 @@ public class DelegateClassAdapter extends ClassVisitor {
             access = access & ~Opcodes.ACC_NATIVE;
             MethodVisitor mwDelegate = super.visitMethod(access, name, desc, signature, exceptions);
 
-            DelegateMethodAdapter2 a = new DelegateMethodAdapter2(
-                    mLog, null /*mwOriginal*/, mwDelegate, mClassName, name, desc, isStatic);
+            DelegateMethodAdapter a = new DelegateMethodAdapter(
+                    mLog, null, mwDelegate, mClassName, name, desc, isStaticMethod,
+                    mIsStaticInnerClass);
 
             // A native has no code to visit, so we need to generate it directly.
             a.generateDelegateCode();
@@ -112,22 +126,18 @@ public class DelegateClassAdapter extends ClassVisitor {
         //   The content is the original method as-is from the reader.
         // - A brand new implementation of SomeClass.MethodName() which calls to a
         //   non-existing method named SomeClass_Delegate.MethodName().
-        //   The implementation of this 'delegate' method is done in layoutlib_brigde.
+        //   The implementation of this 'delegate' method is done in layoutlib_bridge.
 
         int accessDelegate = access;
-        // change access to public for the original one
-        if (Main.sOptions.generatePublicAccess) {
-            access &= ~(Opcodes.ACC_PROTECTED | Opcodes.ACC_PRIVATE);
-            access |= Opcodes.ACC_PUBLIC;
-        }
+        access = access & ~Opcodes.ACC_PRIVATE;  // If private, make it package protected.
 
         MethodVisitor mwOriginal = super.visitMethod(access, name + ORIGINAL_SUFFIX,
                                                      desc, signature, exceptions);
         MethodVisitor mwDelegate = super.visitMethod(accessDelegate, name,
                                                      desc, signature, exceptions);
 
-        DelegateMethodAdapter2 a = new DelegateMethodAdapter2(
-                mLog, mwOriginal, mwDelegate, mClassName, name, desc, isStatic);
-        return a;
+        return new DelegateMethodAdapter(
+                mLog, mwOriginal, mwDelegate, mClassName, name, desc, isStaticMethod,
+                mIsStaticInnerClass);
     }
 }

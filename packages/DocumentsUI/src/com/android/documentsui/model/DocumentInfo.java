@@ -25,6 +25,7 @@ import android.os.Parcelable;
 import android.provider.DocumentsContract;
 import android.provider.DocumentsContract.Document;
 import android.provider.DocumentsProvider;
+import android.support.annotation.VisibleForTesting;
 
 import com.android.documentsui.DocumentsApplication;
 import com.android.documentsui.RootCursorWrapper;
@@ -36,6 +37,7 @@ import java.io.DataOutputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.net.ProtocolException;
+import java.util.Objects;
 
 /**
  * Representation of a {@link Document}.
@@ -72,7 +74,6 @@ public class DocumentInfo implements Durable, Parcelable {
         summary = null;
         size = -1;
         icon = 0;
-
         derivedUri = null;
     }
 
@@ -138,11 +139,13 @@ public class DocumentInfo implements Durable, Parcelable {
     };
 
     public static DocumentInfo fromDirectoryCursor(Cursor cursor) {
+        assert(cursor != null);
         final String authority = getCursorString(cursor, RootCursorWrapper.COLUMN_AUTHORITY);
         return fromCursor(cursor, authority);
     }
 
     public static DocumentInfo fromCursor(Cursor cursor, String authority) {
+        assert(cursor != null);
         final DocumentInfo info = new DocumentInfo();
         info.updateFromCursor(cursor, authority);
         return info;
@@ -150,8 +153,6 @@ public class DocumentInfo implements Durable, Parcelable {
 
     public void updateFromCursor(Cursor cursor, String authority) {
         this.authority = authority;
-        this.documentId = getCursorString(cursor, Document.COLUMN_DOCUMENT_ID);
-        this.mimeType = getCursorString(cursor, Document.COLUMN_MIME_TYPE);
         this.documentId = getCursorString(cursor, Document.COLUMN_DOCUMENT_ID);
         this.mimeType = getCursorString(cursor, Document.COLUMN_MIME_TYPE);
         this.displayName = getCursorString(cursor, Document.COLUMN_DISPLAY_NAME);
@@ -197,13 +198,25 @@ public class DocumentInfo implements Durable, Parcelable {
         }
     }
 
-    private void deriveFields() {
+    @VisibleForTesting
+    void deriveFields() {
         derivedUri = DocumentsContract.buildDocumentUri(authority, documentId);
     }
 
     @Override
     public String toString() {
-        return "Document{docId=" + documentId + ", name=" + displayName + "}";
+        return "Document{"
+                + "docId=" + documentId
+                + ", name=" + displayName
+                + ", isContainer=" + isContainer()
+                + ", isDirectory=" + isDirectory()
+                + ", isArchive=" + isArchive()
+                + ", isPartial=" + isPartial()
+                + ", isVirtualDocument=" + isVirtualDocument()
+                + ", isDeleteSupported=" + isDeleteSupported()
+                + ", isCreateSupported=" + isCreateSupported()
+                + ", isRenameSupported=" + isRenameSupported()
+                + "}";
     }
 
     public boolean isCreateSupported() {
@@ -222,12 +235,59 @@ public class DocumentInfo implements Durable, Parcelable {
         return (flags & Document.FLAG_DIR_PREFERS_GRID) != 0;
     }
 
+    public boolean isWriteSupported() {
+        return (flags & Document.FLAG_SUPPORTS_WRITE) != 0;
+    }
+
     public boolean isDeleteSupported() {
         return (flags & Document.FLAG_SUPPORTS_DELETE) != 0;
     }
 
-    public boolean isGridTitlesHidden() {
-        return (flags & Document.FLAG_DIR_HIDE_GRID_TITLES) != 0;
+    public boolean isRemoveSupported() {
+        return (flags & Document.FLAG_SUPPORTS_REMOVE) != 0;
+    }
+
+    public boolean isRenameSupported() {
+        return (flags & Document.FLAG_SUPPORTS_RENAME) != 0;
+    }
+
+    public boolean isArchive() {
+        return (flags & Document.FLAG_ARCHIVE) != 0;
+    }
+
+    public boolean isPartial() {
+        return (flags & Document.FLAG_PARTIAL) != 0;
+    }
+
+    public boolean isContainer() {
+        return isDirectory() || isArchive();
+    }
+
+    public boolean isVirtualDocument() {
+        return (flags & Document.FLAG_VIRTUAL_DOCUMENT) != 0;
+    }
+
+    public int hashCode() {
+        return derivedUri.hashCode() + mimeType.hashCode();
+    }
+
+    public boolean equals(Object o) {
+        if (o == null) {
+            return false;
+        }
+
+        if (this == o) {
+            return true;
+        }
+
+        if (o instanceof DocumentInfo) {
+            DocumentInfo other = (DocumentInfo) o;
+            // Uri + mime type should be totally unique.
+            return Objects.equals(derivedUri, other.derivedUri)
+                    && Objects.equals(mimeType, other.mimeType);
+        }
+
+        return false;
     }
 
     public static String getCursorString(Cursor cursor, String columnName) {
@@ -266,11 +326,5 @@ public class DocumentInfo implements Durable, Parcelable {
         final FileNotFoundException fnfe = new FileNotFoundException(t.getMessage());
         fnfe.initCause(t);
         throw fnfe;
-    }
-
-    public static int compareToIgnoreCaseNullable(String lhs, String rhs) {
-        if (lhs == null) return -1;
-        if (rhs == null) return 1;
-        return lhs.compareToIgnoreCase(rhs);
     }
 }

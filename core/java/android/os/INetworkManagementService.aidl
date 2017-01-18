@@ -18,11 +18,13 @@
 package android.os;
 
 import android.net.InterfaceConfiguration;
+import android.net.INetd;
 import android.net.INetworkManagementEventObserver;
-import android.net.LinkAddress;
+import android.net.Network;
 import android.net.NetworkStats;
 import android.net.RouteInfo;
-import android.net.wifi.WifiConfiguration;
+import android.net.UidRange;
+import android.os.INetworkActivityListener;
 
 /**
  * @hide
@@ -34,7 +36,7 @@ interface INetworkManagementService
      **/
 
     /**
-     * Register an observer to receive events
+     * Register an observer to receive events.
      */
     void registerObserver(INetworkManagementEventObserver obs);
 
@@ -42,6 +44,11 @@ interface INetworkManagementService
      * Unregister an observer from receiving events.
      */
     void unregisterObserver(INetworkManagementEventObserver obs);
+
+    /**
+     * Retrieve an INetd to talk to netd.
+     */
+    INetd getNetdService();
 
     /**
      * Returns a list of currently known network interfaces
@@ -90,32 +97,19 @@ interface INetworkManagementService
     void enableIpv6(String iface);
 
     /**
-     * Retrieves the network routes currently configured on the specified
-     * interface
+     * Enables or enables IPv6 ND offload.
      */
-    RouteInfo[] getRoutes(String iface);
+    void setInterfaceIpv6NdOffload(String iface, boolean enable);
 
     /**
      * Add the specified route to the interface.
      */
-    void addRoute(String iface, in RouteInfo route);
+    void addRoute(int netId, in RouteInfo route);
 
     /**
      * Remove the specified route from the interface.
      */
-    void removeRoute(String iface, in RouteInfo route);
-
-    /**
-     * Add the specified route to a secondary interface
-     * This will go into a special route table to be accessed
-     * via ip rules
-     */
-    void addSecondaryRoute(String iface, in RouteInfo route);
-
-    /**
-     * Remove the specified secondary route.
-     */
-    void removeSecondaryRoute(String iface, in RouteInfo route);
+    void removeRoute(int netId, in RouteInfo route);
 
     /**
      * Set the specified MTU size
@@ -175,12 +169,24 @@ interface INetworkManagementService
     /**
      * Sets the list of DNS forwarders (in order of priority)
      */
-    void setDnsForwarders(in String[] dns);
+    void setDnsForwarders(in Network network, in String[] dns);
 
     /**
-     * Returns the list of DNS fowarders (in order of priority)
+     * Returns the list of DNS forwarders (in order of priority)
      */
     String[] getDnsForwarders();
+
+    /**
+     * Enables unidirectional packet forwarding from {@code fromIface} to
+     * {@code toIface}.
+     */
+    void startInterfaceForwarding(String fromIface, String toIface);
+
+    /**
+     * Disables unidirectional packet forwarding from {@code fromIface} to
+     * {@code toIface}.
+     */
+    void stopInterfaceForwarding(String fromIface, String toIface);
 
     /**
      *  Enables Network Address Translation between two interfaces.
@@ -214,27 +220,6 @@ interface INetworkManagementService
      * Detaches a PPP server daemon from the specified TTY.
      */
     void detachPppd(String tty);
-
-    /**
-     * Load firmware for operation in the given mode. Currently the three
-     * modes supported are "AP", "STA" and "P2P".
-     */
-    void wifiFirmwareReload(String wlanIface, String mode);
-
-    /**
-     * Start Wifi Access Point
-     */
-    void startAccessPoint(in WifiConfiguration wifiConfig, String iface);
-
-    /**
-     * Stop Wifi Access Point
-     */
-    void stopAccessPoint(String iface);
-
-    /**
-     * Set Access Point config
-     */
-    void setAccessPoint(in WifiConfiguration wifiConfig, String iface);
 
     /**
      ** DATA USAGE RELATED
@@ -292,7 +277,11 @@ interface INetworkManagementService
     /**
      * Control network activity of a UID over interfaces with a quota limit.
      */
-    void setUidNetworkRules(int uid, boolean rejectOnQuotaInterfaces);
+    void setUidMeteredNetworkBlacklist(int uid, boolean enable);
+    void setUidMeteredNetworkWhitelist(int uid, boolean enable);
+    boolean setDataSaverModeEnabled(boolean enable);
+
+    void setUidCleartextNetworkPolicy(int uid, int policy);
 
     /**
      * Return status of bandwidth control module.
@@ -306,14 +295,12 @@ interface INetworkManagementService
      * reference-counting if an idletimer already exists for given
      * {@code iface}.
      *
-     * {@code label} usually represents the network type of {@code iface}.
-     * Caller should ensure that {@code label} for an {@code iface} remains the
-     * same for all calls to addIdleTimer.
+     * {@code type} is the type of the interface, such as TYPE_MOBILE.
      *
      * Every {@code addIdleTimer} should be paired with a
      * {@link removeIdleTimer} to cleanup when the network disconnects.
      */
-    void addIdleTimer(String iface, int timeout, String label);
+    void addIdleTimer(String iface, int timeout, int type);
 
     /**
      * Removes idletimer for an interface.
@@ -321,124 +308,114 @@ interface INetworkManagementService
     void removeIdleTimer(String iface);
 
     /**
-     * Sets the name of the default interface in the DNS resolver.
+     * Configure name servers, search paths, and resolver parameters for the given network.
      */
-    void setDefaultInterfaceForDns(String iface);
-
-    /**
-     * Bind name servers to an interface in the DNS resolver.
-     */
-    void setDnsServersForInterface(String iface, in String[] servers, String domains);
-
-    /**
-     * Flush the DNS cache associated with the default interface.
-     */
-    void flushDefaultDnsCache();
-
-    /**
-     * Flush the DNS cache associated with the specified interface.
-     */
-    void flushInterfaceDnsCache(String iface);
+    void setDnsConfigurationForNetwork(int netId, in String[] servers, String domains);
 
     void setFirewallEnabled(boolean enabled);
     boolean isFirewallEnabled();
     void setFirewallInterfaceRule(String iface, boolean allow);
     void setFirewallEgressSourceRule(String addr, boolean allow);
     void setFirewallEgressDestRule(String addr, int port, boolean allow);
-    void setFirewallUidRule(int uid, boolean allow);
+    void setFirewallUidRule(int chain, int uid, int rule);
+    void setFirewallUidRules(int chain, in int[] uids, in int[] rules);
+    void setFirewallChainEnabled(int chain, boolean enable);
 
     /**
-     * Set all packets from users [uid_start,uid_end] to go through interface iface
-     * iface must already be set for marked forwarding by {@link setMarkedForwarding}
+     * Set all packets from users in ranges to go through VPN specified by netId.
      */
-    void setUidRangeRoute(String iface, int uid_start, int uid_end);
+    void addVpnUidRanges(int netId, in UidRange[] ranges);
 
     /**
-     * Clears the special routing rules for users [uid_start,uid_end]
+     * Clears the special VPN rules for users in ranges and VPN specified by netId.
      */
-    void clearUidRangeRoute(String iface, int uid_start, int uid_end);
+    void removeVpnUidRanges(int netId, in UidRange[] ranges);
 
     /**
-     * Setup an interface for routing packets marked by {@link setUidRangeRoute}
-     *
-     * This sets up a dedicated routing table for packets marked for {@code iface} and adds
-     * source-NAT rules so that the marked packets have the correct source address.
-     */
-    void setMarkedForwarding(String iface);
-
-    /**
-     * Removes marked forwarding for an interface
-     */
-    void clearMarkedForwarding(String iface);
-
-    /**
-     * Get the SO_MARK associated with routing packets for user {@code uid}
-     */
-    int getMarkForUid(int uid);
-
-    /**
-     * Get the SO_MARK associated with protecting packets from VPN routing rules
-     */
-    int getMarkForProtect();
-
-    /**
-     * Route all traffic in {@code route} to {@code iface} setup for marked forwarding
-     */
-    void setMarkedForwardingRoute(String iface, in RouteInfo route);
-
-    /**
-     * Clear routes set by {@link setMarkedForwardingRoute}
-     */
-    void clearMarkedForwardingRoute(String iface, in RouteInfo route);
-
-    /**
-     * Exempts {@code host} from the routing set up by {@link setMarkedForwardingRoute}
-     * All connects to {@code host} will use the global routing table
-     */
-    void setHostExemption(in LinkAddress host);
-
-    /**
-     * Clears an exemption set by {@link setHostExemption}
-     */
-    void clearHostExemption(in LinkAddress host);
-
-    /**
-     * Set a process (pid) to use the name servers associated with the specified interface.
-     */
-    void setDnsInterfaceForPid(String iface, int pid);
-
-    /**
-     * Clear a process (pid) from being associated with an interface.
-     */
-    void clearDnsInterfaceForPid(int pid);
-
-    /**
-    * Set a range of user ids to use the name servers associated with the specified interface.
-    */
-    void setDnsInterfaceForUidRange(String iface, int uid_start, int uid_end);
-
-    /**
-    * Clear a user range from being associated with an interface.
-    */
-    void clearDnsInterfaceForUidRange(int uid_start, int uid_end);
-
-    /**
-    * Clear the mappings from pid to Dns interface and from uid range to Dns interface.
-    */
-    void clearDnsInterfaceMaps();
-
-    /**
-     * Start the clatd (464xlat) service
+     * Start the clatd (464xlat) service on the given interface.
      */
     void startClatd(String interfaceName);
 
     /**
-     * Stop the clatd (464xlat) service
+     * Stop the clatd (464xlat) service on the given interface.
      */
-    void stopClatd();
+    void stopClatd(String interfaceName);
 
     /**
-     * Determine whether the clatd (464xlat) service has been started
+     * Determine whether the clatd (464xlat) service has been started on the given interface.
      */
-    boolean isClatdStarted();
+    boolean isClatdStarted(String interfaceName);
+
+    /**
+     * Start listening for mobile activity state changes.
+     */
+    void registerNetworkActivityListener(INetworkActivityListener listener);
+
+    /**
+     * Stop listening for mobile activity state changes.
+     */
+    void unregisterNetworkActivityListener(INetworkActivityListener listener);
+
+    /**
+     * Check whether the mobile radio is currently active.
+     */
+    boolean isNetworkActive();
+
+    /**
+     * Setup a new physical network.
+     * @param permission null if no permissions required to access this network.  PERMISSION_NETWORK
+     *                   or PERMISSION_SYSTEM to set respective permission.
+     */
+    void createPhysicalNetwork(int netId, String permission);
+
+    /**
+     * Setup a new VPN.
+     */
+    void createVirtualNetwork(int netId, boolean hasDNS, boolean secure);
+
+    /**
+     * Remove a network.
+     */
+    void removeNetwork(int netId);
+
+    /**
+     * Add an interface to a network.
+     */
+    void addInterfaceToNetwork(String iface, int netId);
+
+    /**
+     * Remove an Interface from a network.
+     */
+    void removeInterfaceFromNetwork(String iface, int netId);
+
+    void addLegacyRouteForNetId(int netId, in RouteInfo routeInfo, int uid);
+
+    void setDefaultNetId(int netId);
+    void clearDefaultNetId();
+
+    /**
+     * Set permission for a network.
+     * @param permission null to clear permissions. PERMISSION_NETWORK or PERMISSION_SYSTEM to set
+     *                   permission.
+     */
+    void setNetworkPermission(int netId, String permission);
+
+    void setPermission(String permission, in int[] uids);
+    void clearPermission(in int[] uids);
+
+    /**
+     * Allow UID to call protect().
+     */
+    void allowProtect(int uid);
+
+    /**
+     * Deny UID from calling protect().
+     */
+    void denyProtect(int uid);
+
+    void addInterfaceToLocalNetwork(String iface, in List<RouteInfo> routes);
+    void removeInterfaceFromLocalNetwork(String iface);
+    int removeRoutesFromLocalNetwork(in List<RouteInfo> routes);
+
+    void setAllowOnlyVpnForUids(boolean enable, in UidRange[] uidRanges);
 }

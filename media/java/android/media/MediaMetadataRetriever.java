@@ -21,6 +21,7 @@ import android.content.Context;
 import android.content.res.AssetFileDescriptor;
 import android.graphics.Bitmap;
 import android.net.Uri;
+import android.os.IBinder;
 
 import java.io.FileDescriptor;
 import java.io.FileInputStream;
@@ -63,9 +64,7 @@ public class MediaMetadataRetriever
             throw new IllegalArgumentException();
         }
 
-        FileInputStream is = null;
-        try {
-            is = new FileInputStream(path);
+        try (FileInputStream is = new FileInputStream(path)) {
             FileDescriptor fd = is.getFD();
             setDataSource(fd, 0, 0x7ffffffffffffffL);
         } catch (FileNotFoundException fileEx) {
@@ -73,12 +72,6 @@ public class MediaMetadataRetriever
         } catch (IOException ioEx) {
             throw new IllegalArgumentException();
         }
-
-        try {
-            if (is != null) {
-                is.close();
-            }
-        } catch (Exception e) {}
     }
 
     /**
@@ -100,11 +93,16 @@ public class MediaMetadataRetriever
             values[i] = entry.getValue();
             ++i;
         }
-        _setDataSource(uri, keys, values);
+
+        _setDataSource(
+                MediaHTTPService.createHttpServiceBinderIfNecessary(uri),
+                uri,
+                keys,
+                values);
     }
 
     private native void _setDataSource(
-        String uri, String[] keys, String[] values)
+        IBinder httpServiceBinder, String uri, String[] keys, String[] values)
         throws IllegalArgumentException;
 
     /**
@@ -197,7 +195,20 @@ public class MediaMetadataRetriever
     }
 
     /**
-     * Call this method after setDataSource(). This method retrieves the 
+     * Sets the data source (MediaDataSource) to use.
+     *
+     * @param dataSource the MediaDataSource for the media you want to play
+     */
+    public void setDataSource(MediaDataSource dataSource)
+            throws IllegalArgumentException {
+        _setDataSource(dataSource);
+    }
+
+    private native void _setDataSource(MediaDataSource dataSource)
+          throws IllegalArgumentException;
+
+    /**
+     * Call this method after setDataSource(). This method retrieves the
      * meta data value associated with the keyCode.
      * 
      * The keyCode currently supported is listed below as METADATA_XXX
@@ -492,5 +503,11 @@ public class MediaMetadataRetriever
      * The video rotation angle may be 0, 90, 180, or 270 degrees.
      */
     public static final int METADATA_KEY_VIDEO_ROTATION = 24;
+    /**
+     * This key retrieves the original capture framerate, if it's
+     * available. The capture framerate will be a floating point
+     * number.
+     */
+    public static final int METADATA_KEY_CAPTURE_FRAMERATE = 25;
     // Add more here...
 }

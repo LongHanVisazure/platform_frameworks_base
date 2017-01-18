@@ -18,23 +18,22 @@
 
 #include <androidfw/BackupHelpers.h>
 
-#include <utils/KeyedVector.h>
-#include <utils/ByteOrder.h>
-#include <utils/String8.h>
-
 #include <errno.h>
-#include <sys/types.h>
-#include <sys/uio.h>
-#include <sys/stat.h>
-#include <sys/time.h>  // for utimes
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/time.h>  // for utimes
+#include <sys/uio.h>
 #include <unistd.h>
 #include <utime.h>
-#include <fcntl.h>
 #include <zlib.h>
 
-#include <cutils/log.h>
+#include <log/log.h>
+#include <utils/ByteOrder.h>
+#include <utils/KeyedVector.h>
+#include <utils/String8.h>
 
 namespace android {
 
@@ -68,14 +67,11 @@ struct file_metadata_v1 {
 
 const static int CURRENT_METADATA_VERSION = 1;
 
-#if 1
-#define LOGP(f, x...)
-#else
+static const bool kIsDebug = false;
 #if TEST_BACKUP_HELPERS
-#define LOGP(f, x...) printf(f "\n", x)
+#define LOGP(f, x...) if (kIsDebug) printf(f "\n", x)
 #else
-#define LOGP(x...) ALOGD(x)
-#endif
+#define LOGP(x...) if (kIsDebug) ALOGD(x)
 #endif
 
 const static int ROUND_UP[4] = { 0, 3, 2, 1 };
@@ -225,8 +221,6 @@ write_update_file(BackupDataWriter* dataStream, int fd, int mode, const String8&
     file_metadata_v1 metadata;
 
     char* buf = (char*)malloc(bufsize);
-    int crc = crc32(0L, Z_NULL, 0);
-
 
     fileSize = lseek(fd, 0, SEEK_END);
     lseek(fd, 0, SEEK_SET);
@@ -310,8 +304,12 @@ write_update_file(BackupDataWriter* dataStream, const String8& key, char const* 
 }
 
 static int
-compute_crc32(int fd)
-{
+compute_crc32(const char* file, FileRec* out) {
+    int fd = open(file, O_RDONLY);
+    if (fd < 0) {
+        return -1;
+    }
+
     const int bufsize = 4*1024;
     int amt;
 
@@ -324,8 +322,11 @@ compute_crc32(int fd)
         crc = crc32(crc, (Bytef*)buf, amt);
     }
 
+    close(fd);
     free(buf);
-    return crc;
+
+    out->s.crc32 = crc;
+    return NO_ERROR;
 }
 
 int
@@ -353,7 +354,8 @@ back_up_files(int oldSnapshotFD, BackupDataWriter* dataStream, int newSnapshotFD
 
         err = stat(file, &st);
         if (err != 0) {
-            r.deleted = true;
+            // not found => treat as deleted
+            continue;
         } else {
             r.deleted = false;
             r.s.modTime_sec = st.st_mtime;
@@ -361,11 +363,16 @@ back_up_files(int oldSnapshotFD, BackupDataWriter* dataStream, int newSnapshotFD
             //r.s.modTime_nsec = st.st_mtime_nsec;
             r.s.mode = st.st_mode;
             r.s.size = st.st_size;
-            // we compute the crc32 later down below, when we already have the file open.
 
             if (newSnapshot.indexOfKey(key) >= 0) {
                 LOGP("back_up_files key already in use '%s'", key.string());
                 return -1;
+            }
+
+            // compute the CRC
+            if (compute_crc32(file, &r) != NO_ERROR) {
+                ALOGW("Unable to open file %s", file);
+                continue;
             }
         }
         newSnapshot.add(key, r);
@@ -374,49 +381,41 @@ back_up_files(int oldSnapshotFD, BackupDataWriter* dataStream, int newSnapshotFD
     int n = 0;
     int N = oldSnapshot.size();
     int m = 0;
+    int M = newSnapshot.size();
 
-    while (n<N && m<fileCount) {
+    while (n<N && m<M) {
         const String8& p = oldSnapshot.keyAt(n);
         const String8& q = newSnapshot.keyAt(m);
         FileRec& g = newSnapshot.editValueAt(m);
         int cmp = p.compare(q);
-        if (g.deleted || cmp < 0) {
-            // file removed
+        if (cmp < 0) {
+            // file present in oldSnapshot, but not present in newSnapshot
             LOGP("file removed: %s", p.string());
-            g.deleted = true; // They didn't mention the file, but we noticed that it's gone.
-            dataStream->WriteEntityHeader(p, -1);
+            write_delete_file(dataStream, p);
             n++;
-        }
-        else if (cmp > 0) {
+        } else if (cmp > 0) {
             // file added
-            LOGP("file added: %s", g.file.string());
+            LOGP("file added: %s crc=0x%08x", g.file.string(), g.s.crc32);
             write_update_file(dataStream, q, g.file.string());
             m++;
-        }
-        else {
-            // both files exist, check them
+        } else {
+            // same file exists in both old and new; check whether to update
             const FileState& f = oldSnapshot.valueAt(n);
 
-            int fd = open(g.file.string(), O_RDONLY);
-            if (fd < 0) {
-                // We can't open the file.  Don't report it as a delete either.  Let the
-                // server keep the old version.  Maybe they'll be able to deal with it
-                // on restore.
-                LOGP("Unable to open file %s - skipping", g.file.string());
-            } else {
-                g.s.crc32 = compute_crc32(fd);
-
-                LOGP("%s", q.string());
-                LOGP("  new: modTime=%d,%d mode=%04o size=%-3d crc32=0x%08x",
-                        f.modTime_sec, f.modTime_nsec, f.mode, f.size, f.crc32);
-                LOGP("  old: modTime=%d,%d mode=%04o size=%-3d crc32=0x%08x",
-                        g.s.modTime_sec, g.s.modTime_nsec, g.s.mode, g.s.size, g.s.crc32);
-                if (f.modTime_sec != g.s.modTime_sec || f.modTime_nsec != g.s.modTime_nsec
-                        || f.mode != g.s.mode || f.size != g.s.size || f.crc32 != g.s.crc32) {
+            LOGP("%s", q.string());
+            LOGP("  old: modTime=%d,%d mode=%04o size=%-3d crc32=0x%08x",
+                    f.modTime_sec, f.modTime_nsec, f.mode, f.size, f.crc32);
+            LOGP("  new: modTime=%d,%d mode=%04o size=%-3d crc32=0x%08x",
+                    g.s.modTime_sec, g.s.modTime_nsec, g.s.mode, g.s.size, g.s.crc32);
+            if (f.modTime_sec != g.s.modTime_sec || f.modTime_nsec != g.s.modTime_nsec
+                    || f.mode != g.s.mode || f.size != g.s.size || f.crc32 != g.s.crc32) {
+                int fd = open(g.file.string(), O_RDONLY);
+                if (fd < 0) {
+                    ALOGE("Unable to read file for backup: %s", g.file.string());
+                } else {
                     write_update_file(dataStream, fd, g.s.mode, p, g.file.string());
+                    close(fd);
                 }
-
-                close(fd);
             }
             n++;
             m++;
@@ -425,12 +424,12 @@ back_up_files(int oldSnapshotFD, BackupDataWriter* dataStream, int newSnapshotFD
 
     // these were deleted
     while (n<N) {
-        dataStream->WriteEntityHeader(oldSnapshot.keyAt(n), -1);
+        write_delete_file(dataStream, oldSnapshot.keyAt(n));
         n++;
     }
 
     // these were added
-    while (m<fileCount) {
+    while (m<M) {
         const String8& q = newSnapshot.keyAt(m);
         FileRec& g = newSnapshot.editValueAt(m);
         write_update_file(dataStream, q, g.file.string());
@@ -442,19 +441,7 @@ back_up_files(int oldSnapshotFD, BackupDataWriter* dataStream, int newSnapshotFD
     return 0;
 }
 
-// Utility function, equivalent to stpcpy(): perform a strcpy, but instead of
-// returning the initial dest, return a pointer to the trailing NUL.
-static char* strcpy_ptr(char* dest, const char* str) {
-    if (dest && str) {
-        while ((*dest = *str) != 0) {
-            dest++;
-            str++;
-        }
-    }
-    return dest;
-}
-
-static void calc_tar_checksum(char* buf) {
+static void calc_tar_checksum(char* buf, size_t buf_size) {
     // [ 148 :   8 ] checksum -- to be calculated with this field as space chars
     memset(buf + 148, ' ', 8);
 
@@ -465,11 +452,13 @@ static void calc_tar_checksum(char* buf) {
 
     // Now write the real checksum value:
     // [ 148 :   8 ]  checksum: 6 octal digits [leading zeroes], NUL, SPC
-    sprintf(buf + 148, "%06o", sum); // the trailing space is already in place
+    snprintf(buf + 148, buf_size - 148, "%06o", sum); // the trailing space is
+                                                      // already in place
 }
 
 // Returns number of bytes written
-static int write_pax_header_entry(char* buf, const char* key, const char* value) {
+static int write_pax_header_entry(char* buf, size_t buf_size,
+                                  const char* key, const char* value) {
     // start with the size of "1 key=value\n"
     int len = strlen(key) + strlen(value) + 4;
     if (len > 9) len++;
@@ -478,7 +467,7 @@ static int write_pax_header_entry(char* buf, const char* key, const char* value)
     // since PATH_MAX is 4096 we don't expect to have to generate any single
     // header entry longer than 9999 characters
 
-    return sprintf(buf, "%d %s=%s\n", len, key, value);
+    return snprintf(buf, buf_size, "%d %s=%s\n", len, key, value);
 }
 
 // Wire format to the backup manager service is chunked:  each chunk is prefixed by
@@ -490,7 +479,8 @@ void send_tarfile_chunk(BackupDataWriter* writer, const char* buffer, size_t siz
 }
 
 int write_tarfile(const String8& packageName, const String8& domain,
-        const String8& rootpath, const String8& filepath, BackupDataWriter* writer)
+        const String8& rootpath, const String8& filepath, off_t* outSize,
+        BackupDataWriter* writer)
 {
     // In the output stream everything is stored relative to the root
     const char* relstart = filepath.string() + rootpath.length();
@@ -500,6 +490,7 @@ int write_tarfile(const String8& packageName, const String8& domain,
     // If relpath is empty, it means this is the top of one of the standard named
     // domain directories, so we should just skip it
     if (relpath.length() == 0) {
+        *outSize = 0;
         return 0;
     }
 
@@ -529,11 +520,24 @@ int write_tarfile(const String8& packageName, const String8& domain,
         return err;
     }
 
+    // very large files need a pax extended size header
+    if (s.st_size > 077777777777LL) {
+        needExtended = true;
+    }
+
     String8 fullname;   // for pax later on
     String8 prefix;
 
     const int isdir = S_ISDIR(s.st_mode);
     if (isdir) s.st_size = 0;   // directories get no actual data in the tar stream
+
+    // Report the size, including a rough tar overhead estimation: 512 bytes for the
+    // overall tar file-block header, plus 2 blocks if using the pax extended format,
+    // plus the raw content size rounded up to a multiple of 512.
+    *outSize = 512 + (needExtended ? 1024 : 0) + 512*((s.st_size + 511)/512);
+
+    // Measure case: we've returned the size; now return without moving data
+    if (!writer) return 0;
 
     // !!! TODO: use mmap when possible to avoid churning the buffer cache
     // !!! TODO: this will break with symlinks; need to use readlink(2)
@@ -547,8 +551,12 @@ int write_tarfile(const String8& packageName, const String8& domain,
     // read/write up to this much at a time.
     const size_t BUFSIZE = 32 * 1024;
     char* buf = (char *)calloc(1,BUFSIZE);
-    char* paxHeader = buf + 512;    // use a different chunk of it as separate scratch
-    char* paxData = buf + 1024;
+    const size_t PAXHEADER_OFFSET = 512;
+    const size_t PAXHEADER_SIZE = 512;
+    const size_t PAXDATA_SIZE = BUFSIZE - (PAXHEADER_SIZE + PAXHEADER_OFFSET);
+    char* const paxHeader = buf + PAXHEADER_OFFSET; // use a different chunk of
+                                                    // it as separate scratch
+    char* const paxData = paxHeader + PAXHEADER_SIZE;
 
     if (buf == NULL) {
         ALOGE("Out of mem allocating transfer buffer");
@@ -572,14 +580,10 @@ int write_tarfile(const String8& packageName, const String8& domain,
     snprintf(buf + 116, 8, "0%lo", (unsigned long)s.st_gid);
 
     // [ 124 :  12 ] file size in bytes
-    if (s.st_size > 077777777777LL) {
-        // very large files need a pax extended size header
-        needExtended = true;
-    }
     snprintf(buf + 124, 12, "%011llo", (isdir) ? 0LL : s.st_size);
 
     // [ 136 :  12 ] last mod time as a UTC time_t
-    snprintf(buf + 136, 12, "%0lo", s.st_mtime);
+    snprintf(buf + 136, 12, "%0lo", (unsigned long)s.st_mtime);
 
     // [ 156 :   1 ] link/file type
     uint8_t type;
@@ -631,22 +635,21 @@ int write_tarfile(const String8& packageName, const String8& domain,
     // already preflighted
     if (needExtended) {
         char sizeStr[32];   // big enough for a 64-bit unsigned value in decimal
-        char* p = paxData;
 
         // construct the pax extended header data block
-        memset(paxData, 0, BUFSIZE - (paxData - buf));
-        int len;
+        memset(paxData, 0, PAXDATA_SIZE);
 
         // size header -- calc len in digits by actually rendering the number
         // to a string - brute force but simple
+        int paxLen = 0;
         snprintf(sizeStr, sizeof(sizeStr), "%lld", (long long)s.st_size);
-        p += write_pax_header_entry(p, "size", sizeStr);
+        paxLen += write_pax_header_entry(paxData, PAXDATA_SIZE, "size", sizeStr);
 
         // fullname was generated above with the ustar paths
-        p += write_pax_header_entry(p, "path", fullname.string());
+        paxLen += write_pax_header_entry(paxData + paxLen, PAXDATA_SIZE - paxLen,
+                "path", fullname.string());
 
         // Now we know how big the pax data is
-        int paxLen = p - paxData;
 
         // Now build the pax *header* templated on the ustar header
         memcpy(paxHeader, buf, 512);
@@ -661,10 +664,10 @@ int write_tarfile(const String8& packageName, const String8& domain,
 
         // [ 124 :  12 ] size of pax extended header data
         memset(paxHeader + 124, 0, 12);
-        snprintf(paxHeader + 124, 12, "%011o", (unsigned int)(p - paxData));
+        snprintf(paxHeader + 124, 12, "%011o", (unsigned int)paxLen);
 
         // Checksum and write the pax block header
-        calc_tar_checksum(paxHeader);
+        calc_tar_checksum(paxHeader, PAXHEADER_SIZE);
         send_tarfile_chunk(writer, paxHeader, 512);
 
         // Now write the pax data itself
@@ -673,7 +676,7 @@ int write_tarfile(const String8& packageName, const String8& domain,
     }
 
     // Checksum and write the 512-byte ustar file header block to the output
-    calc_tar_checksum(buf);
+    calc_tar_checksum(buf, BUFSIZE);
     send_tarfile_chunk(writer, buf, 512);
 
     // Now write the file data itself, for real files.  We honor tar's convention that
@@ -1200,7 +1203,6 @@ test_read_header_and_entity(BackupDataReader& reader, const char* str)
     size_t bufSize = strlen(str)+1;
     char* buf = (char*)malloc(bufSize);
     String8 string;
-    int cookie = 0x11111111;
     size_t actualSize;
     bool done;
     int type;
@@ -1333,23 +1335,12 @@ get_mod_time(const char* filename, struct timeval times[2])
         fprintf(stderr, "stat '%s' failed: %s\n", filename, strerror(errno));
         return errno;
     }
-    times[0].tv_sec = st.st_atime;
-    times[1].tv_sec = st.st_mtime;
 
-    // If st_atime is a macro then struct stat64 uses struct timespec
-    // to store the access and modif time values and typically
-    // st_*time_nsec is not defined. In glibc, this is controlled by
-    // __USE_MISC.
-#ifdef __USE_MISC
-#if !defined(st_atime) || defined(st_atime_nsec)
-#error "Check if this __USE_MISC conditional is still needed."
-#endif
+    times[0].tv_sec = st.st_atim.tv_sec;
     times[0].tv_usec = st.st_atim.tv_nsec / 1000;
+
+    times[1].tv_sec = st.st_mtim.tv_sec;
     times[1].tv_usec = st.st_mtim.tv_nsec / 1000;
-#else
-    times[0].tv_usec = st.st_atime_nsec / 1000;
-    times[1].tv_usec = st.st_mtime_nsec / 1000;
-#endif
 
     return 0;
 }
@@ -1490,7 +1481,6 @@ int
 backup_helper_test_null_base()
 {
     int err;
-    int oldSnapshotFD;
     int dataStreamFD;
     int newSnapshotFD;
 
@@ -1539,7 +1529,6 @@ int
 backup_helper_test_missing_file()
 {
     int err;
-    int oldSnapshotFD;
     int dataStreamFD;
     int newSnapshotFD;
 

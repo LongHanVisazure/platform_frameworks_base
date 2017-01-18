@@ -16,6 +16,7 @@
 
 package android.view;
 
+import android.annotation.SystemApi;
 import android.app.AppGlobals;
 import android.content.Context;
 import android.content.res.Configuration;
@@ -64,6 +65,12 @@ public class ViewConfiguration {
     private static final int DEFAULT_LONG_PRESS_TIMEOUT = 500;
 
     /**
+     * Defines the default duration in milliseconds between the first tap's up event and the second
+     * tap's down event for an interaction to be considered part of the same multi-press.
+     */
+    private static final int DEFAULT_MULTI_PRESS_TIMEOUT = 300;
+
+    /**
      * Defines the time between successive key repeats in milliseconds.
      */
     private static final int KEY_REPEAT_DELAY = 50;
@@ -80,7 +87,7 @@ public class ViewConfiguration {
      * is a tap or a scroll. If the user does not move within this interval, it is
      * considered to be a tap.
      */
-    private static final int TAP_TIMEOUT = 180;
+    private static final int TAP_TIMEOUT = 100;
 
     /**
      * Defines the duration in milliseconds we will wait to see if a touch event
@@ -212,6 +219,25 @@ public class ViewConfiguration {
      */
     private static final int OVERFLING_DISTANCE = 6;
 
+    /**
+     * Amount to scroll in response to a {@link MotionEvent#ACTION_SCROLL} event, in dips per
+     * axis value.
+     */
+    private static final int SCROLL_FACTOR = 64;
+
+    /**
+     * Default duration to hide an action mode for.
+     */
+    private static final long ACTION_MODE_HIDE_DURATION_DEFAULT = 2000;
+
+    /**
+     * Configuration values for overriding {@link #hasPermanentMenuKey()} behavior.
+     * These constants must match the definition in res/values/config.xml.
+     */
+    private static final int HAS_PERMANENT_MENU_KEY_AUTODETECT = 0;
+    private static final int HAS_PERMANENT_MENU_KEY_TRUE = 1;
+    private static final int HAS_PERMANENT_MENU_KEY_FALSE = 2;
+
     private final int mEdgeSlop;
     private final int mFadingEdgeLength;
     private final int mMinimumFlingVelocity;
@@ -226,6 +252,8 @@ public class ViewConfiguration {
     private final int mOverscrollDistance;
     private final int mOverflingDistance;
     private final boolean mFadingMarqueeEnabled;
+    private final long mGlobalActionsKeyTimeout;
+    private final int mScrollFactor;
 
     private boolean sHasPermanentMenuKey;
     private boolean sHasPermanentMenuKeySet;
@@ -253,6 +281,8 @@ public class ViewConfiguration {
         mOverscrollDistance = OVERSCROLL_DISTANCE;
         mOverflingDistance = OVERFLING_DISTANCE;
         mFadingMarqueeEnabled = true;
+        mGlobalActionsKeyTimeout = GLOBAL_ACTIONS_KEY_TIMEOUT;
+        mScrollFactor = SCROLL_FACTOR;
     }
 
     /**
@@ -279,8 +309,6 @@ public class ViewConfiguration {
 
         mEdgeSlop = (int) (sizeAndDensity * EDGE_SLOP + 0.5f);
         mFadingEdgeLength = (int) (sizeAndDensity * FADING_EDGE_LENGTH + 0.5f);
-        mMinimumFlingVelocity = (int) (density * MINIMUM_FLING_VELOCITY + 0.5f);
-        mMaximumFlingVelocity = (int) (density * MAXIMUM_FLING_VELOCITY + 0.5f);
         mScrollbarSize = (int) (density * SCROLL_BAR_SIZE + 0.5f);
         mDoubleTapSlop = (int) (sizeAndDensity * DOUBLE_TAP_SLOP + 0.5f);
         mWindowTouchSlop = (int) (sizeAndDensity * WINDOW_TOUCH_SLOP + 0.5f);
@@ -296,12 +324,31 @@ public class ViewConfiguration {
         mOverflingDistance = (int) (sizeAndDensity * OVERFLING_DISTANCE + 0.5f);
 
         if (!sHasPermanentMenuKeySet) {
-            IWindowManager wm = WindowManagerGlobal.getWindowManagerService();
-            try {
-                sHasPermanentMenuKey = !wm.hasNavigationBar();
-                sHasPermanentMenuKeySet = true;
-            } catch (RemoteException ex) {
-                sHasPermanentMenuKey = false;
+            final int configVal = res.getInteger(
+                    com.android.internal.R.integer.config_overrideHasPermanentMenuKey);
+
+            switch (configVal) {
+                default:
+                case HAS_PERMANENT_MENU_KEY_AUTODETECT: {
+                    IWindowManager wm = WindowManagerGlobal.getWindowManagerService();
+                    try {
+                        sHasPermanentMenuKey = !wm.hasNavigationBar();
+                        sHasPermanentMenuKeySet = true;
+                    } catch (RemoteException ex) {
+                        sHasPermanentMenuKey = false;
+                    }
+                }
+                break;
+
+                case HAS_PERMANENT_MENU_KEY_TRUE:
+                    sHasPermanentMenuKey = true;
+                    sHasPermanentMenuKeySet = true;
+                    break;
+
+                case HAS_PERMANENT_MENU_KEY_FALSE:
+                    sHasPermanentMenuKey = false;
+                    sHasPermanentMenuKeySet = true;
+                    break;
             }
         }
 
@@ -312,6 +359,15 @@ public class ViewConfiguration {
         mPagingTouchSlop = mTouchSlop * 2;
 
         mDoubleTapTouchSlop = mTouchSlop;
+
+        mMinimumFlingVelocity = res.getDimensionPixelSize(
+                com.android.internal.R.dimen.config_viewMinFlingVelocity);
+        mMaximumFlingVelocity = res.getDimensionPixelSize(
+                com.android.internal.R.dimen.config_viewMaxFlingVelocity);
+        mGlobalActionsKeyTimeout = res.getInteger(
+                com.android.internal.R.integer.config_globalActionsKeyTimeout);
+        mScrollFactor = res.getDimensionPixelSize(
+                com.android.internal.R.dimen.config_scrollFactor);
     }
 
     /**
@@ -399,6 +455,16 @@ public class ViewConfiguration {
     public static int getLongPressTimeout() {
         return AppGlobals.getIntCoreSetting(Settings.Secure.LONG_PRESS_TIMEOUT,
                 DEFAULT_LONG_PRESS_TIMEOUT);
+    }
+
+    /**
+     * @return the duration in milliseconds between the first tap's up event and the second tap's
+     * down event for an interaction to be considered part of the same multi-press.
+     * @hide
+     */
+    public static int getMultiPressTimeout() {
+        return AppGlobals.getIntCoreSetting(Settings.Secure.MULTI_PRESS_TIMEOUT,
+                DEFAULT_MULTI_PRESS_TIMEOUT);
     }
 
     /**
@@ -614,6 +680,16 @@ public class ViewConfiguration {
     }
 
     /**
+     * @return Amount to scroll in response to a {@link MotionEvent#ACTION_SCROLL} event. Multiply
+     * this by the event's axis value to obtain the number of pixels to be scrolled.
+     * @hide
+     * @SystemApi
+     */
+    public int getScaledScrollFactor() {
+        return mScrollFactor;
+    }
+
+    /**
      * The maximum drawing cache size expressed in bytes.
      *
      * @return the maximum size of View's drawing cache expressed in bytes
@@ -668,9 +744,23 @@ public class ViewConfiguration {
      *
      * @return how long a user needs to press the relevant key to bring up
      *   the global actions dialog.
+     * @deprecated This timeout should not be used by applications
      */
+    @Deprecated
     public static long getGlobalActionKeyTimeout() {
         return GLOBAL_ACTIONS_KEY_TIMEOUT;
+    }
+
+    /**
+     * The amount of time a user needs to press the relevant key to bring up
+     * the global actions dialog.
+     *
+     * @return how long a user needs to press the relevant key to bring up
+     *   the global actions dialog.
+     * @hide
+     */
+    public long getDeviceGlobalActionKeyTimeout() {
+        return mGlobalActionsKeyTimeout;
     }
 
     /**
@@ -681,6 +771,13 @@ public class ViewConfiguration {
      */
     public static float getScrollFriction() {
         return SCROLL_FRICTION;
+    }
+
+    /**
+     * @return the default duration in milliseconds for {@link ActionMode#hide(long)}.
+     */
+    public static long getDefaultActionModeHideDuration() {
+        return ACTION_MODE_HIDE_DURATION_DEFAULT;
     }
 
     /**

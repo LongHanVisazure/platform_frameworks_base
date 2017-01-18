@@ -26,14 +26,15 @@ enum {
 // This is a stub that real consumers should override.
 class BpObbActionListener: public BpInterface<IObbActionListener> {
 public:
-    BpObbActionListener(const sp<IBinder>& impl)
+    explicit BpObbActionListener(const sp<IBinder>& impl)
         : BpInterface<IObbActionListener>(impl)
     { }
 
-    virtual void onObbResult(const String16& filename, const int32_t nonce, const int32_t state) { }
+    virtual void onObbResult(const String16& /* filename */, const int32_t /* nonce */,
+                             const int32_t /* state */) { }
 };
 
-IMPLEMENT_META_INTERFACE(ObbActionListener, "IObbActionListener");
+IMPLEMENT_META_INTERFACE(ObbActionListener, "IObbActionListener")
 
 // ----------------------------------------------------------------------
 
@@ -49,7 +50,7 @@ status_t BnObbActionListener::onTransact(
             onObbResult(filename, nonce, state);
             reply->writeNoException();
             return NO_ERROR;
-        } break;
+        }
         default:
             return BBinder::onTransact(code, data, reply, flags);
     }
@@ -57,4 +58,4 @@ status_t BnObbActionListener::onTransact(
 
 // ----------------------------------------------------------------------
 
-};
+}

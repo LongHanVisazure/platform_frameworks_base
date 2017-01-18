@@ -33,57 +33,48 @@ ALL_MODULES.$(1).INSTALLED := \
 endef
 
 ##########################################
-# We may only afford small font footprint.
+# The following fonts are just symlinks, for backward compatibility.
 ##########################################
 $(eval $(call create-font-symlink,DroidSans.ttf,Roboto-Regular.ttf))
 $(eval $(call create-font-symlink,DroidSans-Bold.ttf,Roboto-Bold.ttf))
+$(eval $(call create-font-symlink,DroidSerif-Regular.ttf,NotoSerif-Regular.ttf))
+$(eval $(call create-font-symlink,DroidSerif-Bold.ttf,NotoSerif-Bold.ttf))
+$(eval $(call create-font-symlink,DroidSerif-Italic.ttf,NotoSerif-Italic.ttf))
+$(eval $(call create-font-symlink,DroidSerif-BoldItalic.ttf,NotoSerif-BoldItalic.ttf))
 
-################################
-# On space-constrained devices, we include a subset of fonts:
-ifeq ($(SMALLER_FONT_FOOTPRINT),true)
-droidsans_fallback_src := DroidSansFallback.ttf
-extra_font_files := DroidSans.ttf DroidSans-Bold.ttf
-else
-include $(CLEAR_VARS)
-LOCAL_MODULE := DroidSansEthiopic-Regular.ttf
-LOCAL_SRC_FILES := $(LOCAL_MODULE)
-LOCAL_MODULE_CLASS := ETC
-LOCAL_MODULE_TAGS := optional
-LOCAL_MODULE_PATH := $(TARGET_OUT)/fonts
-include $(BUILD_PREBUILT)
-
-include $(CLEAR_VARS)
-LOCAL_MODULE := MTLmr3m.ttf
-LOCAL_SRC_FILES := $(LOCAL_MODULE)
-LOCAL_MODULE_CLASS := ETC
-LOCAL_MODULE_TAGS := optional
-LOCAL_MODULE_PATH := $(TARGET_OUT)/fonts
-include $(BUILD_PREBUILT)
-
-droidsans_fallback_src := DroidSansFallbackFull.ttf
 extra_font_files := \
-	DroidSans.ttf \
-	DroidSans-Bold.ttf \
-	DroidSansEthiopic-Regular.ttf \
-	MTLmr3m.ttf
-endif  # SMALLER_FONT_FOOTPRINT
+    DroidSans.ttf \
+    DroidSans-Bold.ttf
 
 ################################
+# Use DroidSansMono to hang extra_font_files on
 include $(CLEAR_VARS)
-LOCAL_MODULE := DroidSansFallback.ttf
-LOCAL_SRC_FILES := $(droidsans_fallback_src)
+LOCAL_MODULE := DroidSansMono.ttf
+LOCAL_SRC_FILES := $(LOCAL_MODULE)
 LOCAL_MODULE_CLASS := ETC
 LOCAL_MODULE_TAGS := optional
 LOCAL_MODULE_PATH := $(TARGET_OUT)/fonts
 LOCAL_REQUIRED_MODULES := $(extra_font_files)
 include $(BUILD_PREBUILT)
-
-font_symlink_src :=
-font_symlink :=
-droidsans_fallback_src :=
 extra_font_files :=
+
 ################################
-# Build the rest font files as prebuilt.
+# Include the DroidSansFallback subset on SMALLER_FONT_FOOTPRINT build
+ifeq ($(SMALLER_FONT_FOOTPRINT),true)
+
+include $(CLEAR_VARS)
+LOCAL_MODULE := DroidSansFallback.ttf
+LOCAL_SRC_FILES := $(LOCAL_MODULE)
+LOCAL_MODULE_CLASS := ETC
+LOCAL_MODULE_TAGS := optional
+LOCAL_MODULE_PATH := $(TARGET_OUT)/fonts
+include $(BUILD_PREBUILT)
+droidsans_fallback_src :=
+
+endif  # SMALLER_FONT_FOOTPRINT
+
+################################
+# Build the rest of font files as prebuilt.
 
 # $(1): The source file name in LOCAL_PATH.
 #       It also serves as the module name and the dest file name.
@@ -98,52 +89,25 @@ $(eval include $(BUILD_PREBUILT))
 endef
 
 font_src_files := \
-    Roboto-Regular.ttf \
-    Roboto-Bold.ttf \
-    Roboto-Italic.ttf \
-    Roboto-BoldItalic.ttf \
-    DroidSerif-Regular.ttf \
-    DroidSerif-Bold.ttf \
-    DroidSerif-Italic.ttf \
-    DroidSerif-BoldItalic.ttf \
-    DroidSansMono.ttf \
-    Clockopia.ttf \
-    AndroidClock.ttf \
-    AndroidClock_Highlight.ttf \
-    AndroidClock_Solid.ttf
-
-ifeq ($(MINIMAL_FONT_FOOTPRINT),true)
-
-$(eval $(call create-font-symlink,Roboto-Light.ttf,Roboto-Regular.ttf))
-$(eval $(call create-font-symlink,Roboto-LightItalic.ttf,Roboto-Italic.ttf))
-$(eval $(call create-font-symlink,Roboto-Thin.ttf,Roboto-Regular.ttf))
-$(eval $(call create-font-symlink,Roboto-ThinItalic.ttf,Roboto-Italic.ttf))
-$(eval $(call create-font-symlink,RobotoCondensed-Regular.ttf,Roboto-Regular.ttf))
-$(eval $(call create-font-symlink,RobotoCondensed-Bold.ttf,Roboto-Bold.ttf))
-$(eval $(call create-font-symlink,RobotoCondensed-Italic.ttf,Roboto-Italic.ttf))
-$(eval $(call create-font-symlink,RobotoCondensed-BoldItalic.ttf,Roboto-BoldItalic.ttf))
-
-else # !MINIMAL_FONT
-font_src_files += \
-    Roboto-Light.ttf \
-    Roboto-LightItalic.ttf \
-    Roboto-Thin.ttf \
-    Roboto-ThinItalic.ttf \
-    RobotoCondensed-Regular.ttf \
-    RobotoCondensed-Bold.ttf \
-    RobotoCondensed-Italic.ttf \
-    RobotoCondensed-BoldItalic.ttf \
-    DroidNaskh-Regular.ttf \
-    DroidNaskhUI-Regular.ttf \
-    DroidSansHebrew-Regular.ttf \
-    DroidSansHebrew-Bold.ttf \
-    DroidSansArmenian.ttf \
-    DroidSansGeorgian.ttf \
-    AndroidEmoji.ttf
-
-endif # !MINIMAL_FONT
+    AndroidClock.ttf
 
 $(foreach f, $(font_src_files), $(call build-one-font-module, $(f)))
 
 build-one-font-module :=
 font_src_files :=
+
+
+# Run sanity tests on fonts on checkbuild
+checkbuild: fontchain_lint
+
+FONTCHAIN_LINTER := frameworks/base/tools/fonts/fontchain_lint.py
+ifeq ($(SMALLER_FONT_FOOTPRINT),true)
+CHECK_EMOJI := false
+else
+CHECK_EMOJI := true
+endif
+
+.PHONY: fontchain_lint
+fontchain_lint: $(FONTCHAIN_LINTER) $(TARGET_OUT)/etc/fonts.xml $(PRODUCT_OUT)/system.img
+	PYTHONPATH=$$PYTHONPATH:external/fonttools/Lib \
+	python $(FONTCHAIN_LINTER) $(TARGET_OUT) $(CHECK_EMOJI) external/unicode

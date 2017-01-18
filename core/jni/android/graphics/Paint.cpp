@@ -21,23 +21,34 @@
 
 #include "jni.h"
 #include "GraphicsJNI.h"
-#include <android_runtime/AndroidRuntime.h>
+#include "core_jni_helpers.h"
+#include <ScopedStringChars.h>
 #include <ScopedUtfChars.h>
 
 #include "SkBlurDrawLooper.h"
 #include "SkColorFilter.h"
 #include "SkMaskFilter.h"
+#include "SkPath.h"
 #include "SkRasterizer.h"
 #include "SkShader.h"
 #include "SkTypeface.h"
 #include "SkXfermode.h"
 #include "unicode/uloc.h"
 #include "unicode/ushape.h"
-#include "TextLayout.h"
+#include "utils/Blur.h"
 
-// temporary for debugging
-#include <Caches.h>
-#include <utils/Log.h>
+#include <hwui/MinikinSkia.h>
+#include <hwui/MinikinUtils.h>
+#include <hwui/Paint.h>
+#include <hwui/Typeface.h>
+#include <minikin/GraphemeBreak.h>
+#include <minikin/Measurement.h>
+#include <unicode/utf16.h>
+
+#include <cassert>
+#include <cstring>
+#include <memory>
+#include <vector>
 
 namespace android {
 
@@ -55,350 +66,382 @@ static JMetricsID gFontMetrics_fieldID;
 static jclass   gFontMetricsInt_class;
 static JMetricsID gFontMetricsInt_fieldID;
 
-static void defaultSettingsForAndroid(SkPaint* paint) {
+static void defaultSettingsForAndroid(Paint* paint) {
     // GlyphID encoding is required because we are using Harfbuzz shaping
-    paint->setTextEncoding(SkPaint::kGlyphID_TextEncoding);
-
-    SkPaintOptionsAndroid paintOpts = paint->getPaintOptionsAndroid();
-    paintOpts.setUseFontFallbacks(true);
-    paint->setPaintOptionsAndroid(paintOpts);
+    paint->setTextEncoding(Paint::kGlyphID_TextEncoding);
 }
 
-class SkPaintGlue {
-public:
+namespace PaintGlue {
     enum MoveOpt {
         AFTER, AT_OR_AFTER, BEFORE, AT_OR_BEFORE, AT
     };
 
-    static void finalizer(JNIEnv* env, jobject clazz, jlong objHandle) {
-        SkPaint* obj = reinterpret_cast<SkPaint*>(objHandle);
-        delete obj;
+    static void deletePaint(Paint* paint) {
+        delete paint;
     }
 
-    static jlong init(JNIEnv* env, jobject clazz) {
-        SkPaint* obj = new SkPaint();
+    static jlong getNativeFinalizer(JNIEnv*, jobject) {
+        return static_cast<jlong>(reinterpret_cast<uintptr_t>(&deletePaint));
+    }
+
+    static jlong init(JNIEnv* env, jobject) {
+        static_assert(1 <<  0 == SkPaint::kAntiAlias_Flag,          "paint_flags_mismatch");
+        static_assert(1 <<  2 == SkPaint::kDither_Flag,             "paint_flags_mismatch");
+        static_assert(1 <<  3 == SkPaint::kUnderlineText_Flag,      "paint_flags_mismatch");
+        static_assert(1 <<  4 == SkPaint::kStrikeThruText_Flag,     "paint_flags_mismatch");
+        static_assert(1 <<  5 == SkPaint::kFakeBoldText_Flag,       "paint_flags_mismatch");
+        static_assert(1 <<  6 == SkPaint::kLinearText_Flag,         "paint_flags_mismatch");
+        static_assert(1 <<  7 == SkPaint::kSubpixelText_Flag,       "paint_flags_mismatch");
+        static_assert(1 <<  8 == SkPaint::kDevKernText_Flag,        "paint_flags_mismatch");
+        static_assert(1 << 10 == SkPaint::kEmbeddedBitmapText_Flag, "paint_flags_mismatch");
+
+        Paint* obj = new Paint();
         defaultSettingsForAndroid(obj);
         return reinterpret_cast<jlong>(obj);
     }
 
     static jlong initWithPaint(JNIEnv* env, jobject clazz, jlong paintHandle) {
-        SkPaint* paint = reinterpret_cast<SkPaint*>(paintHandle);
-        SkPaint* obj = new SkPaint(*paint);
+        Paint* paint = reinterpret_cast<Paint*>(paintHandle);
+        Paint* obj = new Paint(*paint);
         return reinterpret_cast<jlong>(obj);
     }
 
     static void reset(JNIEnv* env, jobject clazz, jlong objHandle) {
-        SkPaint* obj = reinterpret_cast<SkPaint*>(objHandle);
+        Paint* obj = reinterpret_cast<Paint*>(objHandle);
         obj->reset();
         defaultSettingsForAndroid(obj);
     }
 
     static void assign(JNIEnv* env, jobject clazz, jlong dstPaintHandle, jlong srcPaintHandle) {
-        SkPaint* dst = reinterpret_cast<SkPaint*>(dstPaintHandle);
-        const SkPaint* src = reinterpret_cast<SkPaint*>(srcPaintHandle);
+        Paint* dst = reinterpret_cast<Paint*>(dstPaintHandle);
+        const Paint* src = reinterpret_cast<Paint*>(srcPaintHandle);
         *dst = *src;
     }
 
-    static jint getFlags(JNIEnv* env, jobject paint) {
-        NPE_CHECK_RETURN_ZERO(env, paint);
-        int result;
-        result = GraphicsJNI::getNativePaint(env, paint)->getFlags();
+    // Equivalent to the Java Paint's FILTER_BITMAP_FLAG.
+    static const uint32_t sFilterBitmapFlag = 0x02;
+
+    static jint getFlags(JNIEnv* env, jobject, jlong paintHandle) {
+        Paint* nativePaint = reinterpret_cast<Paint*>(paintHandle);
+        uint32_t result = nativePaint->getFlags();
+        result &= ~sFilterBitmapFlag; // Filtering no longer stored in this bit. Mask away.
+        if (nativePaint->getFilterQuality() != kNone_SkFilterQuality) {
+            result |= sFilterBitmapFlag;
+        }
         return static_cast<jint>(result);
     }
 
-    static void setFlags(JNIEnv* env, jobject paint, jint flags) {
-        NPE_CHECK_RETURN_VOID(env, paint);
-        GraphicsJNI::getNativePaint(env, paint)->setFlags(flags);
+    static void setFlags(JNIEnv* env, jobject, jlong paintHandle, jint flags) {
+        Paint* nativePaint = reinterpret_cast<Paint*>(paintHandle);
+        // Instead of modifying 0x02, change the filter level.
+        nativePaint->setFilterQuality(flags & sFilterBitmapFlag
+                ? kLow_SkFilterQuality
+                : kNone_SkFilterQuality);
+        // Don't pass through filter flag, which is no longer stored in paint's flags.
+        flags &= ~sFilterBitmapFlag;
+        // Use the existing value for 0x02.
+        const uint32_t existing0x02Flag = nativePaint->getFlags() & sFilterBitmapFlag;
+        flags |= existing0x02Flag;
+        nativePaint->setFlags(flags);
     }
 
-    static jint getHinting(JNIEnv* env, jobject paint) {
-        NPE_CHECK_RETURN_ZERO(env, paint);
-        return GraphicsJNI::getNativePaint(env, paint)->getHinting()
-                == SkPaint::kNo_Hinting ? 0 : 1;
+    static jint getHinting(JNIEnv* env, jobject, jlong paintHandle) {
+        return reinterpret_cast<Paint*>(paintHandle)->getHinting()
+                == Paint::kNo_Hinting ? 0 : 1;
     }
 
-    static void setHinting(JNIEnv* env, jobject paint, jint mode) {
-        NPE_CHECK_RETURN_VOID(env, paint);
-        GraphicsJNI::getNativePaint(env, paint)->setHinting(
-                mode == 0 ? SkPaint::kNo_Hinting : SkPaint::kNormal_Hinting);
+    static void setHinting(JNIEnv* env, jobject, jlong paintHandle, jint mode) {
+        reinterpret_cast<Paint*>(paintHandle)->setHinting(
+                mode == 0 ? Paint::kNo_Hinting : Paint::kNormal_Hinting);
     }
 
-    static void setAntiAlias(JNIEnv* env, jobject paint, jboolean aa) {
-        NPE_CHECK_RETURN_VOID(env, paint);
-        GraphicsJNI::getNativePaint(env, paint)->setAntiAlias(aa);
+    static void setAntiAlias(JNIEnv* env, jobject, jlong paintHandle, jboolean aa) {
+        reinterpret_cast<Paint*>(paintHandle)->setAntiAlias(aa);
     }
 
-    static void setLinearText(JNIEnv* env, jobject paint, jboolean linearText) {
-        NPE_CHECK_RETURN_VOID(env, paint);
-        GraphicsJNI::getNativePaint(env, paint)->setLinearText(linearText);
+    static void setLinearText(JNIEnv* env, jobject, jlong paintHandle, jboolean linearText) {
+        reinterpret_cast<Paint*>(paintHandle)->setLinearText(linearText);
     }
 
-    static void setSubpixelText(JNIEnv* env, jobject paint, jboolean subpixelText) {
-        NPE_CHECK_RETURN_VOID(env, paint);
-        GraphicsJNI::getNativePaint(env, paint)->setSubpixelText(subpixelText);
+    static void setSubpixelText(JNIEnv* env, jobject, jlong paintHandle, jboolean subpixelText) {
+        reinterpret_cast<Paint*>(paintHandle)->setSubpixelText(subpixelText);
     }
 
-    static void setUnderlineText(JNIEnv* env, jobject paint, jboolean underlineText) {
-        NPE_CHECK_RETURN_VOID(env, paint);
-        GraphicsJNI::getNativePaint(env, paint)->setUnderlineText(underlineText);
+    static void setUnderlineText(JNIEnv* env, jobject, jlong paintHandle, jboolean underlineText) {
+        reinterpret_cast<Paint*>(paintHandle)->setUnderlineText(underlineText);
     }
 
-    static void setStrikeThruText(JNIEnv* env, jobject paint, jboolean strikeThruText) {
-        NPE_CHECK_RETURN_VOID(env, paint);
-        GraphicsJNI::getNativePaint(env, paint)->setStrikeThruText(strikeThruText);
+    static void setStrikeThruText(JNIEnv* env, jobject, jlong paintHandle, jboolean strikeThruText) {
+        reinterpret_cast<Paint*>(paintHandle)->setStrikeThruText(strikeThruText);
     }
 
-    static void setFakeBoldText(JNIEnv* env, jobject paint, jboolean fakeBoldText) {
-        NPE_CHECK_RETURN_VOID(env, paint);
-        GraphicsJNI::getNativePaint(env, paint)->setFakeBoldText(fakeBoldText);
+    static void setFakeBoldText(JNIEnv* env, jobject, jlong paintHandle, jboolean fakeBoldText) {
+        reinterpret_cast<Paint*>(paintHandle)->setFakeBoldText(fakeBoldText);
     }
 
-    static void setFilterBitmap(JNIEnv* env, jobject paint, jboolean filterBitmap) {
-        NPE_CHECK_RETURN_VOID(env, paint);
-        GraphicsJNI::getNativePaint(env, paint)->setFilterBitmap(filterBitmap);
+    static void setFilterBitmap(JNIEnv* env, jobject, jlong paintHandle, jboolean filterBitmap) {
+        reinterpret_cast<Paint*>(paintHandle)->setFilterQuality(
+                filterBitmap ? kLow_SkFilterQuality : kNone_SkFilterQuality);
     }
 
-    static void setDither(JNIEnv* env, jobject paint, jboolean dither) {
-        NPE_CHECK_RETURN_VOID(env, paint);
-        GraphicsJNI::getNativePaint(env, paint)->setDither(dither);
+    static void setDither(JNIEnv* env, jobject, jlong paintHandle, jboolean dither) {
+        reinterpret_cast<Paint*>(paintHandle)->setDither(dither);
     }
 
     static jint getStyle(JNIEnv* env, jobject clazz,jlong objHandle) {
-        SkPaint* obj = reinterpret_cast<SkPaint*>(objHandle);
+        Paint* obj = reinterpret_cast<Paint*>(objHandle);
         return static_cast<jint>(obj->getStyle());
     }
 
     static void setStyle(JNIEnv* env, jobject clazz, jlong objHandle, jint styleHandle) {
-        SkPaint* obj = reinterpret_cast<SkPaint*>(objHandle);
-        SkPaint::Style style = static_cast<SkPaint::Style>(styleHandle);
+        Paint* obj = reinterpret_cast<Paint*>(objHandle);
+        Paint::Style style = static_cast<Paint::Style>(styleHandle);
         obj->setStyle(style);
     }
 
-    static jint getColor(JNIEnv* env, jobject paint) {
-        NPE_CHECK_RETURN_ZERO(env, paint);
+    static jint getColor(JNIEnv* env, jobject, jlong paintHandle) {
         int color;
-        color = GraphicsJNI::getNativePaint(env, paint)->getColor();
+        color = reinterpret_cast<Paint*>(paintHandle)->getColor();
         return static_cast<jint>(color);
     }
 
-    static jint getAlpha(JNIEnv* env, jobject paint) {
-        NPE_CHECK_RETURN_ZERO(env, paint);
+    static jint getAlpha(JNIEnv* env, jobject, jlong paintHandle) {
         int alpha;
-        alpha = GraphicsJNI::getNativePaint(env, paint)->getAlpha();
+        alpha = reinterpret_cast<Paint*>(paintHandle)->getAlpha();
         return static_cast<jint>(alpha);
     }
 
-    static void setColor(JNIEnv* env, jobject paint, jint color) {
-        NPE_CHECK_RETURN_VOID(env, paint);
-        GraphicsJNI::getNativePaint(env, paint)->setColor(color);
+    static void setColor(JNIEnv* env, jobject, jlong paintHandle, jint color) {
+        reinterpret_cast<Paint*>(paintHandle)->setColor(color);
     }
 
-    static void setAlpha(JNIEnv* env, jobject paint, jint a) {
-        NPE_CHECK_RETURN_VOID(env, paint);
-        GraphicsJNI::getNativePaint(env, paint)->setAlpha(a);
+    static void setAlpha(JNIEnv* env, jobject, jlong paintHandle, jint a) {
+        reinterpret_cast<Paint*>(paintHandle)->setAlpha(a);
     }
 
-    static jfloat getStrokeWidth(JNIEnv* env, jobject paint) {
-        NPE_CHECK_RETURN_ZERO(env, paint);
-        return SkScalarToFloat(GraphicsJNI::getNativePaint(env, paint)->getStrokeWidth());
+    static jfloat getStrokeWidth(JNIEnv* env, jobject, jlong paintHandle) {
+        return SkScalarToFloat(reinterpret_cast<Paint*>(paintHandle)->getStrokeWidth());
     }
 
-    static void setStrokeWidth(JNIEnv* env, jobject paint, jfloat width) {
-        NPE_CHECK_RETURN_VOID(env, paint);
-        GraphicsJNI::getNativePaint(env, paint)->setStrokeWidth(SkFloatToScalar(width));
+    static void setStrokeWidth(JNIEnv* env, jobject, jlong paintHandle, jfloat width) {
+        reinterpret_cast<Paint*>(paintHandle)->setStrokeWidth(width);
     }
 
-    static jfloat getStrokeMiter(JNIEnv* env, jobject paint) {
-        NPE_CHECK_RETURN_ZERO(env, paint);
-        return SkScalarToFloat(GraphicsJNI::getNativePaint(env, paint)->getStrokeMiter());
+    static jfloat getStrokeMiter(JNIEnv* env, jobject, jlong paintHandle) {
+        return SkScalarToFloat(reinterpret_cast<Paint*>(paintHandle)->getStrokeMiter());
     }
 
-    static void setStrokeMiter(JNIEnv* env, jobject paint, jfloat miter) {
-        NPE_CHECK_RETURN_VOID(env, paint);
-        GraphicsJNI::getNativePaint(env, paint)->setStrokeMiter(SkFloatToScalar(miter));
+    static void setStrokeMiter(JNIEnv* env, jobject, jlong paintHandle, jfloat miter) {
+        reinterpret_cast<Paint*>(paintHandle)->setStrokeMiter(miter);
     }
 
     static jint getStrokeCap(JNIEnv* env, jobject clazz, jlong objHandle) {
-        SkPaint* obj = reinterpret_cast<SkPaint*>(objHandle);
+        Paint* obj = reinterpret_cast<Paint*>(objHandle);
         return static_cast<jint>(obj->getStrokeCap());
     }
 
     static void setStrokeCap(JNIEnv* env, jobject clazz, jlong objHandle, jint capHandle) {
-        SkPaint* obj = reinterpret_cast<SkPaint*>(objHandle);
-        SkPaint::Cap cap = static_cast<SkPaint::Cap>(capHandle);
+        Paint* obj = reinterpret_cast<Paint*>(objHandle);
+        Paint::Cap cap = static_cast<Paint::Cap>(capHandle);
         obj->setStrokeCap(cap);
     }
 
     static jint getStrokeJoin(JNIEnv* env, jobject clazz, jlong objHandle) {
-        SkPaint* obj = reinterpret_cast<SkPaint*>(objHandle);
+        Paint* obj = reinterpret_cast<Paint*>(objHandle);
         return static_cast<jint>(obj->getStrokeJoin());
     }
 
     static void setStrokeJoin(JNIEnv* env, jobject clazz, jlong objHandle, jint joinHandle) {
-        SkPaint* obj = reinterpret_cast<SkPaint*>(objHandle);
-        SkPaint::Join join = (SkPaint::Join) joinHandle;
+        Paint* obj = reinterpret_cast<Paint*>(objHandle);
+        Paint::Join join = (Paint::Join) joinHandle;
         obj->setStrokeJoin(join);
     }
 
     static jboolean getFillPath(JNIEnv* env, jobject clazz, jlong objHandle, jlong srcHandle, jlong dstHandle) {
-        SkPaint* obj = reinterpret_cast<SkPaint*>(objHandle);
+        Paint* obj = reinterpret_cast<Paint*>(objHandle);
         SkPath* src = reinterpret_cast<SkPath*>(srcHandle);
         SkPath* dst = reinterpret_cast<SkPath*>(dstHandle);
         return obj->getFillPath(*src, dst) ? JNI_TRUE : JNI_FALSE;
     }
 
     static jlong setShader(JNIEnv* env, jobject clazz, jlong objHandle, jlong shaderHandle) {
-        SkPaint* obj = reinterpret_cast<SkPaint*>(objHandle);
+        Paint* obj = reinterpret_cast<Paint*>(objHandle);
         SkShader* shader = reinterpret_cast<SkShader*>(shaderHandle);
         return reinterpret_cast<jlong>(obj->setShader(shader));
     }
 
     static jlong setColorFilter(JNIEnv* env, jobject clazz, jlong objHandle, jlong filterHandle) {
-        SkPaint* obj = reinterpret_cast<SkPaint *>(objHandle);
+        Paint* obj = reinterpret_cast<Paint *>(objHandle);
         SkColorFilter* filter  = reinterpret_cast<SkColorFilter *>(filterHandle);
         return reinterpret_cast<jlong>(obj->setColorFilter(filter));
     }
 
     static jlong setXfermode(JNIEnv* env, jobject clazz, jlong objHandle, jlong xfermodeHandle) {
-        SkPaint* obj = reinterpret_cast<SkPaint*>(objHandle);
+        Paint* obj = reinterpret_cast<Paint*>(objHandle);
         SkXfermode* xfermode = reinterpret_cast<SkXfermode*>(xfermodeHandle);
         return reinterpret_cast<jlong>(obj->setXfermode(xfermode));
     }
 
     static jlong setPathEffect(JNIEnv* env, jobject clazz, jlong objHandle, jlong effectHandle) {
-        SkPaint* obj = reinterpret_cast<SkPaint*>(objHandle);
+        Paint* obj = reinterpret_cast<Paint*>(objHandle);
         SkPathEffect* effect  = reinterpret_cast<SkPathEffect*>(effectHandle);
         return reinterpret_cast<jlong>(obj->setPathEffect(effect));
     }
 
     static jlong setMaskFilter(JNIEnv* env, jobject clazz, jlong objHandle, jlong maskfilterHandle) {
-        SkPaint* obj = reinterpret_cast<SkPaint*>(objHandle);
+        Paint* obj = reinterpret_cast<Paint*>(objHandle);
         SkMaskFilter* maskfilter  = reinterpret_cast<SkMaskFilter*>(maskfilterHandle);
         return reinterpret_cast<jlong>(obj->setMaskFilter(maskfilter));
     }
 
     static jlong setTypeface(JNIEnv* env, jobject clazz, jlong objHandle, jlong typefaceHandle) {
-        SkPaint* obj = reinterpret_cast<SkPaint*>(objHandle);
-        SkTypeface* typeface = reinterpret_cast<SkTypeface*>(typefaceHandle);
-        return reinterpret_cast<jlong>(obj->setTypeface(typeface));
+        // TODO: in Paint refactoring, set typeface on android Paint, not Paint
+        return NULL;
     }
 
     static jlong setRasterizer(JNIEnv* env, jobject clazz, jlong objHandle, jlong rasterizerHandle) {
-        SkPaint* obj = reinterpret_cast<SkPaint*>(objHandle);
-        SkRasterizer* rasterizer = reinterpret_cast<SkRasterizer*>(rasterizerHandle);
+        Paint* obj = reinterpret_cast<Paint*>(objHandle);
+        SkAutoTUnref<SkRasterizer> rasterizer(GraphicsJNI::refNativeRasterizer(rasterizerHandle));
         return reinterpret_cast<jlong>(obj->setRasterizer(rasterizer));
     }
 
     static jint getTextAlign(JNIEnv* env, jobject clazz, jlong objHandle) {
-        SkPaint* obj = reinterpret_cast<SkPaint*>(objHandle);
+        Paint* obj = reinterpret_cast<Paint*>(objHandle);
         return static_cast<jint>(obj->getTextAlign());
     }
 
     static void setTextAlign(JNIEnv* env, jobject clazz, jlong objHandle, jint alignHandle) {
-        SkPaint* obj = reinterpret_cast<SkPaint*>(objHandle);
-        SkPaint::Align align = static_cast<SkPaint::Align>(alignHandle);
+        Paint* obj = reinterpret_cast<Paint*>(objHandle);
+        Paint::Align align = static_cast<Paint::Align>(alignHandle);
         obj->setTextAlign(align);
     }
 
-    // generate bcp47 identifier for the supplied locale
-    static void toLanguageTag(char* output, size_t outSize,
-            const char* locale) {
-        if (output == NULL || outSize <= 0) {
-            return;
-        }
-        if (locale == NULL) {
-            output[0] = '\0';
-            return;
-        }
-        char canonicalChars[ULOC_FULLNAME_CAPACITY];
-        UErrorCode uErr = U_ZERO_ERROR;
-        uloc_canonicalize(locale, canonicalChars, ULOC_FULLNAME_CAPACITY,
-                &uErr);
-        if (U_SUCCESS(uErr)) {
-            char likelyChars[ULOC_FULLNAME_CAPACITY];
-            uErr = U_ZERO_ERROR;
-            uloc_addLikelySubtags(canonicalChars, likelyChars,
-                    ULOC_FULLNAME_CAPACITY, &uErr);
-            if (U_SUCCESS(uErr)) {
-                uErr = U_ZERO_ERROR;
-                uloc_toLanguageTag(likelyChars, output, outSize, FALSE, &uErr);
-                if (U_SUCCESS(uErr)) {
-                    return;
-                } else {
-                    ALOGD("uloc_toLanguageTag(\"%s\") failed: %s", likelyChars,
-                            u_errorName(uErr));
-                }
-            } else {
-                ALOGD("uloc_addLikelySubtags(\"%s\") failed: %s",
-                        canonicalChars, u_errorName(uErr));
-            }
+    static jint setTextLocales(JNIEnv* env, jobject clazz, jlong objHandle, jstring locales) {
+        Paint* obj = reinterpret_cast<Paint*>(objHandle);
+        ScopedUtfChars localesChars(env, locales);
+        jint minikinLangListId = FontStyle::registerLanguageList(localesChars.c_str());
+        obj->setMinikinLangListId(minikinLangListId);
+        return minikinLangListId;
+    }
+
+    static void setTextLocalesByMinikinLangListId(JNIEnv* env, jobject clazz, jlong objHandle,
+            jint minikinLangListId) {
+        Paint* obj = reinterpret_cast<Paint*>(objHandle);
+        obj->setMinikinLangListId(minikinLangListId);
+    }
+
+    static jboolean isElegantTextHeight(JNIEnv* env, jobject, jlong paintHandle) {
+        Paint* obj = reinterpret_cast<Paint*>(paintHandle);
+        return obj->getFontVariant() == VARIANT_ELEGANT;
+    }
+
+    static void setElegantTextHeight(JNIEnv* env, jobject, jlong paintHandle, jboolean aa) {
+        Paint* obj = reinterpret_cast<Paint*>(paintHandle);
+        obj->setFontVariant(aa ? VARIANT_ELEGANT : VARIANT_DEFAULT);
+    }
+
+    static jfloat getTextSize(JNIEnv* env, jobject, jlong paintHandle) {
+        return SkScalarToFloat(reinterpret_cast<Paint*>(paintHandle)->getTextSize());
+    }
+
+    static void setTextSize(JNIEnv* env, jobject, jlong paintHandle, jfloat textSize) {
+        reinterpret_cast<Paint*>(paintHandle)->setTextSize(textSize);
+    }
+
+    static jfloat getTextScaleX(JNIEnv* env, jobject, jlong paintHandle) {
+        return SkScalarToFloat(reinterpret_cast<Paint*>(paintHandle)->getTextScaleX());
+    }
+
+    static void setTextScaleX(JNIEnv* env, jobject, jlong paintHandle, jfloat scaleX) {
+        reinterpret_cast<Paint*>(paintHandle)->setTextScaleX(scaleX);
+    }
+
+    static jfloat getTextSkewX(JNIEnv* env, jobject, jlong paintHandle) {
+        return SkScalarToFloat(reinterpret_cast<Paint*>(paintHandle)->getTextSkewX());
+    }
+
+    static void setTextSkewX(JNIEnv* env, jobject, jlong paintHandle, jfloat skewX) {
+        reinterpret_cast<Paint*>(paintHandle)->setTextSkewX(skewX);
+    }
+
+    static jfloat getLetterSpacing(JNIEnv* env, jobject clazz, jlong paintHandle) {
+        Paint* paint = reinterpret_cast<Paint*>(paintHandle);
+        return paint->getLetterSpacing();
+    }
+
+    static void setLetterSpacing(JNIEnv* env, jobject clazz, jlong paintHandle, jfloat letterSpacing) {
+        Paint* paint = reinterpret_cast<Paint*>(paintHandle);
+        paint->setLetterSpacing(letterSpacing);
+    }
+
+    static void setFontFeatureSettings(JNIEnv* env, jobject clazz, jlong paintHandle, jstring settings) {
+        Paint* paint = reinterpret_cast<Paint*>(paintHandle);
+        if (!settings) {
+            paint->setFontFeatureSettings(std::string());
         } else {
-            ALOGD("uloc_canonicalize(\"%s\") failed: %s", locale,
-                    u_errorName(uErr));
+            ScopedUtfChars settingsChars(env, settings);
+            paint->setFontFeatureSettings(std::string(settingsChars.c_str(), settingsChars.size()));
         }
-        // unable to build a proper language identifier
-        output[0] = '\0';
     }
 
-    static void setTextLocale(JNIEnv* env, jobject clazz, jlong objHandle, jstring locale) {
-        SkPaint* obj = reinterpret_cast<SkPaint*>(objHandle);
-        ScopedUtfChars localeChars(env, locale);
-        char langTag[ULOC_FULLNAME_CAPACITY];
-        toLanguageTag(langTag, ULOC_FULLNAME_CAPACITY, localeChars.c_str());
-
-        SkPaintOptionsAndroid paintOpts = obj->getPaintOptionsAndroid();
-        paintOpts.setLanguage(langTag);
-        obj->setPaintOptionsAndroid(paintOpts);
+    static jint getHyphenEdit(JNIEnv* env, jobject clazz, jlong paintHandle, jint hyphen) {
+        Paint* paint = reinterpret_cast<Paint*>(paintHandle);
+        return paint->getHyphenEdit();
     }
 
-    static jfloat getTextSize(JNIEnv* env, jobject paint) {
-        NPE_CHECK_RETURN_ZERO(env, paint);
-        return SkScalarToFloat(GraphicsJNI::getNativePaint(env, paint)->getTextSize());
+    static void setHyphenEdit(JNIEnv* env, jobject clazz, jlong paintHandle, jint hyphen) {
+        Paint* paint = reinterpret_cast<Paint*>(paintHandle);
+        paint->setHyphenEdit((uint32_t)hyphen);
     }
 
-    static void setTextSize(JNIEnv* env, jobject paint, jfloat textSize) {
-        NPE_CHECK_RETURN_VOID(env, paint);
-        GraphicsJNI::getNativePaint(env, paint)->setTextSize(SkFloatToScalar(textSize));
+    static SkScalar getMetricsInternal(jlong paintHandle, jlong typefaceHandle,
+            Paint::FontMetrics *metrics) {
+        const int kElegantTop = 2500;
+        const int kElegantBottom = -1000;
+        const int kElegantAscent = 1900;
+        const int kElegantDescent = -500;
+        const int kElegantLeading = 0;
+        Paint* paint = reinterpret_cast<Paint*>(paintHandle);
+        Typeface* typeface = reinterpret_cast<Typeface*>(typefaceHandle);
+        typeface = Typeface::resolveDefault(typeface);
+        FakedFont baseFont = typeface->fFontCollection->baseFontFaked(typeface->fStyle);
+        float saveSkewX = paint->getTextSkewX();
+        bool savefakeBold = paint->isFakeBoldText();
+        MinikinFontSkia::populateSkPaint(paint, baseFont.font, baseFont.fakery);
+        SkScalar spacing = paint->getFontMetrics(metrics);
+        // The populateSkPaint call may have changed fake bold / text skew
+        // because we want to measure with those effects applied, so now
+        // restore the original settings.
+        paint->setTextSkewX(saveSkewX);
+        paint->setFakeBoldText(savefakeBold);
+        if (paint->getFontVariant() == VARIANT_ELEGANT) {
+            SkScalar size = paint->getTextSize();
+            metrics->fTop = -size * kElegantTop / 2048;
+            metrics->fBottom = -size * kElegantBottom / 2048;
+            metrics->fAscent = -size * kElegantAscent / 2048;
+            metrics->fDescent = -size * kElegantDescent / 2048;
+            metrics->fLeading = size * kElegantLeading / 2048;
+            spacing = metrics->fDescent - metrics->fAscent + metrics->fLeading;
+        }
+        return spacing;
     }
 
-    static jfloat getTextScaleX(JNIEnv* env, jobject paint) {
-        NPE_CHECK_RETURN_ZERO(env, paint);
-        return SkScalarToFloat(GraphicsJNI::getNativePaint(env, paint)->getTextScaleX());
-    }
-
-    static void setTextScaleX(JNIEnv* env, jobject paint, jfloat scaleX) {
-        NPE_CHECK_RETURN_VOID(env, paint);
-        GraphicsJNI::getNativePaint(env, paint)->setTextScaleX(SkFloatToScalar(scaleX));
-    }
-
-    static jfloat getTextSkewX(JNIEnv* env, jobject paint) {
-        NPE_CHECK_RETURN_ZERO(env, paint);
-        return SkScalarToFloat(GraphicsJNI::getNativePaint(env, paint)->getTextSkewX());
-    }
-
-    static void setTextSkewX(JNIEnv* env, jobject paint, jfloat skewX) {
-        NPE_CHECK_RETURN_VOID(env, paint);
-        GraphicsJNI::getNativePaint(env, paint)->setTextSkewX(SkFloatToScalar(skewX));
-    }
-
-    static jfloat ascent(JNIEnv* env, jobject paint) {
-        NPE_CHECK_RETURN_ZERO(env, paint);
-        SkPaint::FontMetrics    metrics;
-        (void)GraphicsJNI::getNativePaint(env, paint)->getFontMetrics(&metrics);
+    static jfloat ascent(JNIEnv* env, jobject, jlong paintHandle, jlong typefaceHandle) {
+        Paint::FontMetrics metrics;
+        getMetricsInternal(paintHandle, typefaceHandle, &metrics);
         return SkScalarToFloat(metrics.fAscent);
     }
 
-    static jfloat descent(JNIEnv* env, jobject paint) {
-        NPE_CHECK_RETURN_ZERO(env, paint);
-        SkPaint::FontMetrics    metrics;
-        (void)GraphicsJNI::getNativePaint(env, paint)->getFontMetrics(&metrics);
+    static jfloat descent(JNIEnv* env, jobject, jlong paintHandle, jlong typefaceHandle) {
+        Paint::FontMetrics metrics;
+        getMetricsInternal(paintHandle, typefaceHandle, &metrics);
         return SkScalarToFloat(metrics.fDescent);
     }
 
-    static jfloat getFontMetrics(JNIEnv* env, jobject paint, jobject metricsObj) {
-        NPE_CHECK_RETURN_ZERO(env, paint);
-        SkPaint::FontMetrics metrics;
-        SkScalar             spacing = GraphicsJNI::getNativePaint(env, paint)->getFontMetrics(&metrics);
+    static jfloat getFontMetrics(JNIEnv* env, jobject, jlong paintHandle,
+            jlong typefaceHandle, jobject metricsObj) {
+        Paint::FontMetrics metrics;
+        SkScalar spacing = getMetricsInternal(paintHandle, typefaceHandle, &metrics);
 
         if (metricsObj) {
             SkASSERT(env->IsInstanceOf(metricsObj, gFontMetrics_class));
@@ -411,188 +454,29 @@ public:
         return SkScalarToFloat(spacing);
     }
 
-    static jint getFontMetricsInt(JNIEnv* env, jobject paint, jobject metricsObj) {
-        NPE_CHECK_RETURN_ZERO(env, paint);
-        SkPaint::FontMetrics metrics;
+    static jint getFontMetricsInt(JNIEnv* env, jobject, jlong paintHandle,
+            jlong typefaceHandle, jobject metricsObj) {
+        Paint::FontMetrics metrics;
 
-        GraphicsJNI::getNativePaint(env, paint)->getFontMetrics(&metrics);
-        int ascent = SkScalarRound(metrics.fAscent);
-        int descent = SkScalarRound(metrics.fDescent);
-        int leading = SkScalarRound(metrics.fLeading);
+        getMetricsInternal(paintHandle, typefaceHandle, &metrics);
+        int ascent = SkScalarRoundToInt(metrics.fAscent);
+        int descent = SkScalarRoundToInt(metrics.fDescent);
+        int leading = SkScalarRoundToInt(metrics.fLeading);
 
         if (metricsObj) {
             SkASSERT(env->IsInstanceOf(metricsObj, gFontMetricsInt_class));
-            env->SetIntField(metricsObj, gFontMetricsInt_fieldID.top, SkScalarFloor(metrics.fTop));
+            env->SetIntField(metricsObj, gFontMetricsInt_fieldID.top, SkScalarFloorToInt(metrics.fTop));
             env->SetIntField(metricsObj, gFontMetricsInt_fieldID.ascent, ascent);
             env->SetIntField(metricsObj, gFontMetricsInt_fieldID.descent, descent);
-            env->SetIntField(metricsObj, gFontMetricsInt_fieldID.bottom, SkScalarCeil(metrics.fBottom));
+            env->SetIntField(metricsObj, gFontMetricsInt_fieldID.bottom, SkScalarCeilToInt(metrics.fBottom));
             env->SetIntField(metricsObj, gFontMetricsInt_fieldID.leading, leading);
         }
         return descent - ascent + leading;
     }
 
-    static jfloat measureText_CIII(JNIEnv* env, jobject jpaint, jcharArray text, jint index, jint count,
-            jint bidiFlags) {
-        NPE_CHECK_RETURN_ZERO(env, jpaint);
-        NPE_CHECK_RETURN_ZERO(env, text);
-
-        size_t textLength = env->GetArrayLength(text);
-        if ((index | count) < 0 || (size_t)(index + count) > textLength) {
-            doThrowAIOOBE(env);
-            return 0;
-        }
-        if (count == 0) {
-            return 0;
-        }
-
-        SkPaint* paint = GraphicsJNI::getNativePaint(env, jpaint);
-        const jchar* textArray = env->GetCharArrayElements(text, NULL);
-        jfloat result = 0;
-
-        TextLayout::getTextRunAdvances(paint, textArray, index, count, textLength,
-                bidiFlags, NULL /* dont need all advances */, &result);
-
-        env->ReleaseCharArrayElements(text, const_cast<jchar*>(textArray), JNI_ABORT);
-        return result;
-    }
-
-    static jfloat measureText_StringIII(JNIEnv* env, jobject jpaint, jstring text, jint start, jint end,
-            jint bidiFlags) {
-        NPE_CHECK_RETURN_ZERO(env, jpaint);
-        NPE_CHECK_RETURN_ZERO(env, text);
-
-        size_t textLength = env->GetStringLength(text);
-        int count = end - start;
-        if ((start | count) < 0 || (size_t)end > textLength) {
-            doThrowAIOOBE(env);
-            return 0;
-        }
-        if (count == 0) {
-            return 0;
-        }
-
-        const jchar* textArray = env->GetStringChars(text, NULL);
-        SkPaint* paint = GraphicsJNI::getNativePaint(env, jpaint);
-        jfloat width = 0;
-
-        TextLayout::getTextRunAdvances(paint, textArray, start, count, textLength,
-                bidiFlags, NULL /* dont need all advances */, &width);
-
-        env->ReleaseStringChars(text, textArray);
-        return width;
-    }
-
-    static jfloat measureText_StringI(JNIEnv* env, jobject jpaint, jstring text, jint bidiFlags) {
-        NPE_CHECK_RETURN_ZERO(env, jpaint);
-        NPE_CHECK_RETURN_ZERO(env, text);
-
-        size_t textLength = env->GetStringLength(text);
-        if (textLength == 0) {
-            return 0;
-        }
-
-        const jchar* textArray = env->GetStringChars(text, NULL);
-        SkPaint* paint = GraphicsJNI::getNativePaint(env, jpaint);
-        jfloat width = 0;
-
-        TextLayout::getTextRunAdvances(paint, textArray, 0, textLength, textLength,
-                bidiFlags, NULL /* dont need all advances */, &width);
-
-        env->ReleaseStringChars(text, textArray);
-        return width;
-    }
-
-    static int dotextwidths(JNIEnv* env, SkPaint* paint, const jchar text[], int count, jfloatArray widths,
-            jint bidiFlags) {
-        NPE_CHECK_RETURN_ZERO(env, paint);
-        NPE_CHECK_RETURN_ZERO(env, text);
-
-        if (count < 0 || !widths) {
-            doThrowAIOOBE(env);
-            return 0;
-        }
-        if (count == 0) {
-            return 0;
-        }
-        size_t widthsLength = env->GetArrayLength(widths);
-        if ((size_t)count > widthsLength) {
-            doThrowAIOOBE(env);
-            return 0;
-        }
-
-        AutoJavaFloatArray autoWidths(env, widths, count);
-        jfloat* widthsArray = autoWidths.ptr();
-
-        TextLayout::getTextRunAdvances(paint, text, 0, count, count,
-                bidiFlags, widthsArray, NULL /* dont need totalAdvance */);
-
-        return count;
-    }
-
-    static jint getTextWidths___CIII_F(JNIEnv* env, jobject clazz, jlong paintHandle, jcharArray text,
-            jint index, jint count, jint bidiFlags, jfloatArray widths) {
-        SkPaint* paint = reinterpret_cast<SkPaint*>(paintHandle);
-        const jchar* textArray = env->GetCharArrayElements(text, NULL);
-        count = dotextwidths(env, paint, textArray + index, count, widths, bidiFlags);
-        env->ReleaseCharArrayElements(text, const_cast<jchar*>(textArray),
-                                      JNI_ABORT);
-        return count;
-    }
-
-    static jint getTextWidths__StringIII_F(JNIEnv* env, jobject clazz, jlong paintHandle, jstring text,
-            jint start, jint end, jint bidiFlags, jfloatArray widths) {
-        SkPaint* paint = reinterpret_cast<SkPaint*>(paintHandle);
-        const jchar* textArray = env->GetStringChars(text, NULL);
-        int count = dotextwidths(env, paint, textArray + start, end - start, widths, bidiFlags);
-        env->ReleaseStringChars(text, textArray);
-        return count;
-    }
-
-    static int doTextGlyphs(JNIEnv* env, SkPaint* paint, const jchar* text, jint start, jint count,
-            jint contextCount, jint flags, jcharArray glyphs) {
-        NPE_CHECK_RETURN_ZERO(env, paint);
-        NPE_CHECK_RETURN_ZERO(env, text);
-
-        if ((start | count | contextCount) < 0 || contextCount < count || !glyphs) {
-            doThrowAIOOBE(env);
-            return 0;
-        }
-        if (count == 0) {
-            return 0;
-        }
-        size_t glypthsLength = env->GetArrayLength(glyphs);
-        if ((size_t)count > glypthsLength) {
-            doThrowAIOOBE(env);
-            return 0;
-        }
-
-        jchar* glyphsArray = env->GetCharArrayElements(glyphs, NULL);
-
-        sp<TextLayoutValue> value = TextLayoutEngine::getInstance().getValue(paint,
-                text, start, count, contextCount, flags);
-        const jchar* shapedGlyphs = value->getGlyphs();
-        size_t glyphsCount = value->getGlyphsCount();
-        memcpy(glyphsArray, shapedGlyphs, sizeof(jchar) * glyphsCount);
-
-        env->ReleaseCharArrayElements(glyphs, glyphsArray, JNI_ABORT);
-        return glyphsCount;
-    }
-
-    static jint getTextGlyphs__StringIIIII_C(JNIEnv* env, jobject clazz, jlong paintHandle,
-            jstring text, jint start, jint end, jint contextStart, jint contextEnd, jint flags,
-            jcharArray glyphs) {
-        SkPaint* paint = reinterpret_cast<SkPaint*>(paintHandle);
-        const jchar* textArray = env->GetStringChars(text, NULL);
-        int count = doTextGlyphs(env, paint, textArray + contextStart, start - contextStart,
-                end - start, contextEnd - contextStart, flags, glyphs);
-        env->ReleaseStringChars(text, textArray);
-        return count;
-    }
-
-    static jfloat doTextRunAdvances(JNIEnv *env, SkPaint *paint, const jchar *text,
-                                    jint start, jint count, jint contextCount, jint flags,
-                                    jfloatArray advances, jint advancesIndex) {
-        NPE_CHECK_RETURN_ZERO(env, paint);
+    static jfloat doTextAdvances(JNIEnv *env, Paint *paint, Typeface* typeface,
+            const jchar *text, jint start, jint count, jint contextCount, jint bidiFlags,
+            jfloatArray advances, jint advancesIndex) {
         NPE_CHECK_RETURN_ZERO(env, text);
 
         if ((start | count | contextCount | advancesIndex) < 0 || contextCount < count) {
@@ -604,182 +488,212 @@ public:
         }
         if (advances) {
             size_t advancesLength = env->GetArrayLength(advances);
-            if ((size_t)count > advancesLength) {
+            if ((size_t)(count  + advancesIndex) > advancesLength) {
                 doThrowAIOOBE(env);
                 return 0;
             }
         }
-        jfloat advancesArray[count];
-        jfloat totalAdvance = 0;
-
-        TextLayout::getTextRunAdvances(paint, text, start, count, contextCount, flags,
-                                       advancesArray, &totalAdvance);
-
-        if (advances != NULL) {
-            env->SetFloatArrayRegion(advances, advancesIndex, count, advancesArray);
+        std::unique_ptr<jfloat[]> advancesArray;
+        if (advances) {
+            advancesArray.reset(new jfloat[count]);
         }
-        return totalAdvance;
+        const float advance = MinikinUtils::measureText(paint, bidiFlags, typeface, text,
+                start, count, contextCount, advancesArray.get());
+        if (advances) {
+            env->SetFloatArrayRegion(advances, advancesIndex, count, advancesArray.get());
+        }
+        return advance;
     }
 
-    static jfloat getTextRunAdvances___CIIIII_FI(JNIEnv* env, jobject clazz, jlong paintHandle,
+    static jfloat getTextAdvances___CIIIII_FI(JNIEnv* env, jobject clazz, jlong paintHandle,
+            jlong typefaceHandle,
             jcharArray text, jint index, jint count, jint contextIndex, jint contextCount,
-            jint flags, jfloatArray advances, jint advancesIndex) {
-        SkPaint* paint = reinterpret_cast<SkPaint*>(paintHandle);
+            jint bidiFlags, jfloatArray advances, jint advancesIndex) {
+        Paint* paint = reinterpret_cast<Paint*>(paintHandle);
+        Typeface* typeface = reinterpret_cast<Typeface*>(typefaceHandle);
         jchar* textArray = env->GetCharArrayElements(text, NULL);
-        jfloat result = doTextRunAdvances(env, paint, textArray + contextIndex,
-                index - contextIndex, count, contextCount, flags, advances, advancesIndex);
+        jfloat result = doTextAdvances(env, paint, typeface, textArray + contextIndex,
+                index - contextIndex, count, contextCount, bidiFlags, advances, advancesIndex);
         env->ReleaseCharArrayElements(text, textArray, JNI_ABORT);
         return result;
     }
 
-    static jfloat getTextRunAdvances__StringIIIII_FI(JNIEnv* env, jobject clazz, jlong paintHandle,
-            jstring text, jint start, jint end, jint contextStart, jint contextEnd, jint flags,
+    static jfloat getTextAdvances__StringIIIII_FI(JNIEnv* env, jobject clazz, jlong paintHandle,
+            jlong typefaceHandle,
+            jstring text, jint start, jint end, jint contextStart, jint contextEnd, jint bidiFlags,
             jfloatArray advances, jint advancesIndex) {
-        SkPaint* paint = reinterpret_cast<SkPaint*>(paintHandle);
+        Paint* paint = reinterpret_cast<Paint*>(paintHandle);
+        Typeface* typeface = reinterpret_cast<Typeface*>(typefaceHandle);
         const jchar* textArray = env->GetStringChars(text, NULL);
-        jfloat result = doTextRunAdvances(env, paint, textArray + contextStart,
-                start - contextStart, end - start, contextEnd - contextStart, flags,
+        jfloat result = doTextAdvances(env, paint, typeface, textArray + contextStart,
+                start - contextStart, end - start, contextEnd - contextStart, bidiFlags,
                 advances, advancesIndex);
         env->ReleaseStringChars(text, textArray);
         return result;
     }
 
-    static jint doTextRunCursor(JNIEnv *env, SkPaint* paint, const jchar *text, jint start,
+    static jint doTextRunCursor(JNIEnv *env, Paint* paint, const jchar *text, jint start,
             jint count, jint flags, jint offset, jint opt) {
-        jfloat scalarArray[count];
-
-        TextLayout::getTextRunAdvances(paint, text, start, count, start + count, flags,
-                scalarArray, NULL /* dont need totalAdvance */);
-
-        jint pos = offset - start;
-        switch (opt) {
-        case AFTER:
-          if (pos < count) {
-            pos += 1;
-          }
-          // fall through
-        case AT_OR_AFTER:
-          while (pos < count && scalarArray[pos] == 0) {
-            ++pos;
-          }
-          break;
-        case BEFORE:
-          if (pos > 0) {
-            --pos;
-          }
-          // fall through
-        case AT_OR_BEFORE:
-          while (pos > 0 && scalarArray[pos] == 0) {
-            --pos;
-          }
-          break;
-        case AT:
-        default:
-          if (scalarArray[pos] == 0) {
-            pos = -1;
-          }
-          break;
-        }
-
-        if (pos != -1) {
-          pos += start;
-        }
-
-        return pos;
+        GraphemeBreak::MoveOpt moveOpt = GraphemeBreak::MoveOpt(opt);
+        size_t result = GraphemeBreak::getTextRunCursor(text, start, count, offset, moveOpt);
+        return static_cast<jint>(result);
     }
 
     static jint getTextRunCursor___C(JNIEnv* env, jobject clazz, jlong paintHandle, jcharArray text,
-            jint contextStart, jint contextCount, jint flags, jint offset, jint cursorOpt) {
-        SkPaint* paint = reinterpret_cast<SkPaint*>(paintHandle);
+            jint contextStart, jint contextCount, jint dir, jint offset, jint cursorOpt) {
+        Paint* paint = reinterpret_cast<Paint*>(paintHandle);
         jchar* textArray = env->GetCharArrayElements(text, NULL);
-        jint result = doTextRunCursor(env, paint, textArray, contextStart, contextCount, flags,
+        jint result = doTextRunCursor(env, paint, textArray, contextStart, contextCount, dir,
                 offset, cursorOpt);
         env->ReleaseCharArrayElements(text, textArray, JNI_ABORT);
         return result;
     }
 
     static jint getTextRunCursor__String(JNIEnv* env, jobject clazz, jlong paintHandle, jstring text,
-            jint contextStart, jint contextEnd, jint flags, jint offset, jint cursorOpt) {
-        SkPaint* paint = reinterpret_cast<SkPaint*>(paintHandle);
+            jint contextStart, jint contextEnd, jint dir, jint offset, jint cursorOpt) {
+        Paint* paint = reinterpret_cast<Paint*>(paintHandle);
         const jchar* textArray = env->GetStringChars(text, NULL);
         jint result = doTextRunCursor(env, paint, textArray, contextStart,
-                contextEnd - contextStart, flags, offset, cursorOpt);
+                contextEnd - contextStart, dir, offset, cursorOpt);
         env->ReleaseStringChars(text, textArray);
         return result;
     }
 
-    static void getTextPath(JNIEnv* env, SkPaint* paint, const jchar* text, jint count,
-                            jint bidiFlags, jfloat x, jfloat y, SkPath *path) {
-        TextLayout::getTextPath(paint, text, count, bidiFlags, x, y, path);
+    class GetTextFunctor {
+    public:
+        GetTextFunctor(const Layout& layout, SkPath* path, jfloat x, jfloat y, Paint* paint,
+                    uint16_t* glyphs, SkPoint* pos)
+                : layout(layout), path(path), x(x), y(y), paint(paint), glyphs(glyphs), pos(pos) {
+        }
+
+        void operator()(size_t start, size_t end) {
+            for (size_t i = start; i < end; i++) {
+                glyphs[i] = layout.getGlyphId(i);
+                pos[i].fX = x + layout.getX(i);
+                pos[i].fY = y + layout.getY(i);
+            }
+            if (start == 0) {
+                paint->getPosTextPath(glyphs + start, (end - start) << 1, pos + start, path);
+            } else {
+                paint->getPosTextPath(glyphs + start, (end - start) << 1, pos + start, &tmpPath);
+                path->addPath(tmpPath);
+            }
+        }
+    private:
+        const Layout& layout;
+        SkPath* path;
+        jfloat x;
+        jfloat y;
+        Paint* paint;
+        uint16_t* glyphs;
+        SkPoint* pos;
+        SkPath tmpPath;
+    };
+
+    static void getTextPath(JNIEnv* env, Paint* paint, Typeface* typeface, const jchar* text,
+            jint count, jint bidiFlags, jfloat x, jfloat y, SkPath* path) {
+        Layout layout;
+        MinikinUtils::doLayout(&layout, paint, bidiFlags, typeface, text, 0, count, count);
+        size_t nGlyphs = layout.nGlyphs();
+        uint16_t* glyphs = new uint16_t[nGlyphs];
+        SkPoint* pos = new SkPoint[nGlyphs];
+
+        x += MinikinUtils::xOffsetForTextAlign(paint, layout);
+        Paint::Align align = paint->getTextAlign();
+        paint->setTextAlign(Paint::kLeft_Align);
+        paint->setTextEncoding(Paint::kGlyphID_TextEncoding);
+        GetTextFunctor f(layout, path, x, y, paint, glyphs, pos);
+        MinikinUtils::forFontRun(layout, paint, f);
+        paint->setTextAlign(align);
+        delete[] glyphs;
+        delete[] pos;
     }
 
-    static void getTextPath___C(JNIEnv* env, jobject clazz, jlong paintHandle, jint bidiFlags,
+    static void getTextPath___C(JNIEnv* env, jobject clazz, jlong paintHandle,
+            jlong typefaceHandle, jint bidiFlags,
             jcharArray text, jint index, jint count, jfloat x, jfloat y, jlong pathHandle) {
-        SkPaint* paint = reinterpret_cast<SkPaint*>(paintHandle);
+        Paint* paint = reinterpret_cast<Paint*>(paintHandle);
+        Typeface* typeface = reinterpret_cast<Typeface*>(typefaceHandle);
         SkPath* path = reinterpret_cast<SkPath*>(pathHandle);
         const jchar* textArray = env->GetCharArrayElements(text, NULL);
-        getTextPath(env, paint, textArray + index, count, bidiFlags, x, y, path);
+        getTextPath(env, paint, typeface, textArray + index, count, bidiFlags, x, y, path);
         env->ReleaseCharArrayElements(text, const_cast<jchar*>(textArray), JNI_ABORT);
     }
 
-    static void getTextPath__String(JNIEnv* env, jobject clazz, jlong paintHandle, jint bidiFlags,
+    static void getTextPath__String(JNIEnv* env, jobject clazz, jlong paintHandle,
+            jlong typefaceHandle, jint bidiFlags,
             jstring text, jint start, jint end, jfloat x, jfloat y, jlong pathHandle) {
-        SkPaint* paint = reinterpret_cast<SkPaint*>(paintHandle);
+        Paint* paint = reinterpret_cast<Paint*>(paintHandle);
+        Typeface* typeface = reinterpret_cast<Typeface*>(typefaceHandle);
         SkPath* path = reinterpret_cast<SkPath*>(pathHandle);
         const jchar* textArray = env->GetStringChars(text, NULL);
-        getTextPath(env, paint, textArray + start, end - start, bidiFlags, x, y, path);
+        getTextPath(env, paint, typeface, textArray + start, end - start, bidiFlags, x, y, path);
         env->ReleaseStringChars(text, textArray);
     }
 
-    static void setShadowLayer(JNIEnv* env, jobject jpaint, jfloat radius,
+    static void setShadowLayer(JNIEnv* env, jobject clazz, jlong paintHandle, jfloat radius,
                                jfloat dx, jfloat dy, jint color) {
-        NPE_CHECK_RETURN_VOID(env, jpaint);
-
-        SkPaint* paint = GraphicsJNI::getNativePaint(env, jpaint);
+        Paint* paint = reinterpret_cast<Paint*>(paintHandle);
         if (radius <= 0) {
             paint->setLooper(NULL);
         }
         else {
-            paint->setLooper(new SkBlurDrawLooper(SkFloatToScalar(radius),
-                                                  SkFloatToScalar(dx),
-                                                  SkFloatToScalar(dy),
-                                                  (SkColor)color))->unref();
+            SkScalar sigma = android::uirenderer::Blur::convertRadiusToSigma(radius);
+            paint->setLooper(SkBlurDrawLooper::Create((SkColor)color, sigma, dx, dy))->unref();
         }
     }
 
-    static int breakText(JNIEnv* env, SkPaint& paint, const jchar text[],
+    static jboolean hasShadowLayer(JNIEnv* env, jobject clazz, jlong paintHandle) {
+        Paint* paint = reinterpret_cast<Paint*>(paintHandle);
+        return paint->getLooper() && paint->getLooper()->asABlurShadow(NULL);
+    }
+
+    static int breakText(JNIEnv* env, const Paint& paint, Typeface* typeface, const jchar text[],
                          int count, float maxWidth, jint bidiFlags, jfloatArray jmeasured,
-                         SkPaint::TextBufferDirection tbd) {
-        sp<TextLayoutValue> value = TextLayoutEngine::getInstance().getValue(&paint,
-                text, 0, count, count, bidiFlags);
-        if (value == NULL) {
-            return 0;
+                         const bool forwardScan) {
+        size_t measuredCount = 0;
+        float measured = 0;
+
+        std::unique_ptr<float[]> advancesArray(new float[count]);
+        MinikinUtils::measureText(&paint, bidiFlags, typeface, text, 0, count, count,
+                advancesArray.get());
+
+        for (int i = 0; i < count; i++) {
+            // traverse in the given direction
+            int index = forwardScan ? i : (count - i - 1);
+            float width = advancesArray[index];
+            if (measured + width > maxWidth) {
+                break;
+            }
+            // properly handle clusters when scanning backwards
+            if (forwardScan || width != 0.0f) {
+                measuredCount = i + 1;
+            }
+            measured += width;
         }
-        SkScalar     measured;
-        size_t       bytes = paint.breakText(value->getGlyphs(), value->getGlyphsCount() << 1,
-                                   SkFloatToScalar(maxWidth), &measured, tbd);
-        SkASSERT((bytes & 1) == 0);
 
         if (jmeasured && env->GetArrayLength(jmeasured) > 0) {
             AutoJavaFloatArray autoMeasured(env, jmeasured, 1);
             jfloat* array = autoMeasured.ptr();
-            array[0] = SkScalarToFloat(measured);
+            array[0] = measured;
         }
-        return bytes >> 1;
+        return measuredCount;
     }
 
-    static jint breakTextC(JNIEnv* env, jobject jpaint, jcharArray jtext,
+    static jint breakTextC(JNIEnv* env, jobject clazz, jlong paintHandle, jlong typefaceHandle, jcharArray jtext,
             jint index, jint count, jfloat maxWidth, jint bidiFlags, jfloatArray jmeasuredWidth) {
-        NPE_CHECK_RETURN_ZERO(env, jpaint);
         NPE_CHECK_RETURN_ZERO(env, jtext);
 
-        SkPaint::TextBufferDirection tbd;
+        Paint* paint = reinterpret_cast<Paint*>(paintHandle);
+        Typeface* typeface = reinterpret_cast<Typeface*>(typefaceHandle);
+
+        bool forwardTextDirection;
         if (count < 0) {
-            tbd = SkPaint::kBackward_TextBufferDirection;
+            forwardTextDirection = false;
             count = -count;
         }
         else {
-            tbd = SkPaint::kForward_TextBufferDirection;
+            forwardTextDirection = true;
         }
 
         if ((index < 0) || (index + count > env->GetArrayLength(jtext))) {
@@ -787,175 +701,343 @@ public:
             return 0;
         }
 
-        SkPaint*     paint = GraphicsJNI::getNativePaint(env, jpaint);
         const jchar* text = env->GetCharArrayElements(jtext, NULL);
-        count = breakText(env, *paint, text + index, count, maxWidth,
-                          bidiFlags, jmeasuredWidth, tbd);
+        count = breakText(env, *paint, typeface, text + index, count, maxWidth,
+                          bidiFlags, jmeasuredWidth, forwardTextDirection);
         env->ReleaseCharArrayElements(jtext, const_cast<jchar*>(text),
                                       JNI_ABORT);
         return count;
     }
 
-    static jint breakTextS(JNIEnv* env, jobject jpaint, jstring jtext,
+    static jint breakTextS(JNIEnv* env, jobject clazz, jlong paintHandle, jlong typefaceHandle, jstring jtext,
                 jboolean forwards, jfloat maxWidth, jint bidiFlags, jfloatArray jmeasuredWidth) {
-        NPE_CHECK_RETURN_ZERO(env, jpaint);
         NPE_CHECK_RETURN_ZERO(env, jtext);
 
-        SkPaint::TextBufferDirection tbd = forwards ?
-                                        SkPaint::kForward_TextBufferDirection :
-                                        SkPaint::kBackward_TextBufferDirection;
+        Paint* paint = reinterpret_cast<Paint*>(paintHandle);
+        Typeface* typeface = reinterpret_cast<Typeface*>(typefaceHandle);
 
-        SkPaint* paint = GraphicsJNI::getNativePaint(env, jpaint);
         int count = env->GetStringLength(jtext);
         const jchar* text = env->GetStringChars(jtext, NULL);
-        count = breakText(env, *paint, text, count, maxWidth, bidiFlags, jmeasuredWidth, tbd);
+        count = breakText(env, *paint, typeface, text, count, maxWidth, bidiFlags, jmeasuredWidth, forwards);
         env->ReleaseStringChars(jtext, text);
         return count;
     }
 
-    static void doTextBounds(JNIEnv* env, const jchar* text, int count,
-                             jobject bounds, const SkPaint& paint, jint bidiFlags) {
+    static void doTextBounds(JNIEnv* env, const jchar* text, int count, jobject bounds,
+            const Paint& paint, Typeface* typeface, jint bidiFlags) {
         SkRect  r;
         SkIRect ir;
 
-        sp<TextLayoutValue> value = TextLayoutEngine::getInstance().getValue(&paint,
-                text, 0, count, count, bidiFlags);
-        if (value == NULL) {
-            return;
-        }
-        paint.measureText(value->getGlyphs(), value->getGlyphsCount() << 1, &r);
+        Layout layout;
+        MinikinUtils::doLayout(&layout, &paint, bidiFlags, typeface, text, 0, count, count);
+        MinikinRect rect;
+        layout.getBounds(&rect);
+        r.fLeft = rect.mLeft;
+        r.fTop = rect.mTop;
+        r.fRight = rect.mRight;
+        r.fBottom = rect.mBottom;
         r.roundOut(&ir);
         GraphicsJNI::irect_to_jrect(ir, env, bounds);
     }
 
-    static void getStringBounds(JNIEnv* env, jobject, jlong paintHandle,
+    static void getStringBounds(JNIEnv* env, jobject, jlong paintHandle, jlong typefaceHandle,
                                 jstring text, jint start, jint end, jint bidiFlags, jobject bounds) {
-        const SkPaint* paint = reinterpret_cast<SkPaint*>(paintHandle);;
+        const Paint* paint = reinterpret_cast<Paint*>(paintHandle);
+        Typeface* typeface = reinterpret_cast<Typeface*>(typefaceHandle);
         const jchar* textArray = env->GetStringChars(text, NULL);
-        doTextBounds(env, textArray + start, end - start, bounds, *paint, bidiFlags);
+        doTextBounds(env, textArray + start, end - start, bounds, *paint, typeface, bidiFlags);
         env->ReleaseStringChars(text, textArray);
     }
 
-    static void getCharArrayBounds(JNIEnv* env, jobject, jlong paintHandle,
+    static void getCharArrayBounds(JNIEnv* env, jobject, jlong paintHandle, jlong typefaceHandle,
                         jcharArray text, jint index, jint count, jint bidiFlags, jobject bounds) {
-        const SkPaint* paint = reinterpret_cast<SkPaint*>(paintHandle);
+        const Paint* paint = reinterpret_cast<Paint*>(paintHandle);
+        Typeface* typeface = reinterpret_cast<Typeface*>(typefaceHandle);
         const jchar* textArray = env->GetCharArrayElements(text, NULL);
-        doTextBounds(env, textArray + index, count, bounds, *paint, bidiFlags);
+        doTextBounds(env, textArray + index, count, bounds, *paint, typeface, bidiFlags);
         env->ReleaseCharArrayElements(text, const_cast<jchar*>(textArray),
                                       JNI_ABORT);
     }
 
+    static jboolean layoutContainsNotdef(const Layout& layout) {
+        for (size_t i = 0; i < layout.nGlyphs(); i++) {
+            if (layout.getGlyphId(i) == 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Don't count glyphs that are the recommended "space" glyph and are zero width.
+    // This logic makes assumptions about HarfBuzz layout, but does correctly handle
+    // cases where ligatures form and zero width space glyphs are left in as
+    // placeholders.
+    static size_t countNonSpaceGlyphs(const Layout& layout) {
+        size_t count = 0;
+        static unsigned int kSpaceGlyphId = 3;
+        for (size_t i = 0; i < layout.nGlyphs(); i++) {
+            if (layout.getGlyphId(i) != kSpaceGlyphId || layout.getCharAdvance(i) != 0.0) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    // Returns true if the given string is exact one pair of regional indicators.
+    static bool isFlag(const jchar* str, size_t length) {
+        const jchar RI_LEAD_SURROGATE = 0xD83C;
+        const jchar RI_TRAIL_SURROGATE_MIN = 0xDDE6;
+        const jchar RI_TRAIL_SURROGATE_MAX = 0xDDFF;
+
+        if (length != 4) {
+            return false;
+        }
+        if (str[0] != RI_LEAD_SURROGATE || str[2] != RI_LEAD_SURROGATE) {
+            return false;
+        }
+        return RI_TRAIL_SURROGATE_MIN <= str[1] && str[1] <= RI_TRAIL_SURROGATE_MAX &&
+            RI_TRAIL_SURROGATE_MIN <= str[3] && str[3] <= RI_TRAIL_SURROGATE_MAX;
+    }
+
+    static jboolean hasGlyph(JNIEnv *env, jclass, jlong paintHandle, jlong typefaceHandle,
+            jint bidiFlags, jstring string) {
+        const Paint* paint = reinterpret_cast<Paint*>(paintHandle);
+        Typeface* typeface = reinterpret_cast<Typeface*>(typefaceHandle);
+        ScopedStringChars str(env, string);
+
+        /* Start by rejecting unsupported base code point and variation selector pairs. */
+        size_t nChars = 0;
+        const uint32_t kStartOfString = 0xFFFFFFFF;
+        uint32_t prevCp = kStartOfString;
+        for (size_t i = 0; i < str.size(); i++) {
+            jchar cu = str[i];
+            uint32_t cp = cu;
+            if (U16_IS_TRAIL(cu)) {
+                // invalid UTF-16, unpaired trailing surrogate
+                return false;
+            } else if (U16_IS_LEAD(cu)) {
+                if (i + 1 == str.size()) {
+                    // invalid UTF-16, unpaired leading surrogate at end of string
+                    return false;
+                }
+                i++;
+                jchar cu2 = str[i];
+                if (!U16_IS_TRAIL(cu2)) {
+                    // invalid UTF-16, unpaired leading surrogate
+                    return false;
+                }
+                cp = U16_GET_SUPPLEMENTARY(cu, cu2);
+            }
+
+            if (prevCp != kStartOfString &&
+                ((0xFE00 <= cp && cp <= 0xFE0F) || (0xE0100 <= cp && cp <= 0xE01EF))) {
+                bool hasVS = MinikinUtils::hasVariationSelector(typeface, prevCp, cp);
+                if (!hasVS) {
+                    // No font has a glyph for the code point and variation selector pair.
+                    return false;
+                } else if (nChars == 1 && i + 1 == str.size()) {
+                    // The string is just a codepoint and a VS, we have an authoritative answer
+                    return true;
+                }
+            }
+            nChars++;
+            prevCp = cp;
+        }
+        Layout layout;
+        MinikinUtils::doLayout(&layout, paint, bidiFlags, typeface, str.get(), 0, str.size(),
+                str.size());
+        size_t nGlyphs = countNonSpaceGlyphs(layout);
+        if (nGlyphs != 1 && nChars > 1) {
+            // multiple-character input, and was not a ligature
+            // TODO: handle ZWJ/ZWNJ characters specially so we can detect certain ligatures
+            // in joining scripts, such as Arabic and Mongolian.
+            return false;
+        }
+
+        if (nGlyphs == 0 || layoutContainsNotdef(layout)) {
+            return false;  // The collection doesn't have a glyph.
+        }
+
+        if (nChars == 2 && isFlag(str.get(), str.size())) {
+            // Some font may have a special glyph for unsupported regional indicator pairs.
+            // To return false for this case, need to compare the glyph id with the one of ZZ
+            // since ZZ is reserved for unknown or invalid territory.
+            // U+1F1FF (REGIONAL INDICATOR SYMBOL LETTER Z) is \uD83C\uDDFF in UTF16.
+            static const jchar ZZ_FLAG_STR[] = { 0xD83C, 0xDDFF, 0xD83C, 0xDDFF };
+            Layout zzLayout;
+            MinikinUtils::doLayout(&zzLayout, paint, bidiFlags, typeface, ZZ_FLAG_STR, 0, 4, 4);
+            if (zzLayout.nGlyphs() != 1 || layoutContainsNotdef(zzLayout)) {
+                // The font collection doesn't have a glyph for unknown flag. Just return true.
+                return true;
+            }
+            return zzLayout.getGlyphId(0) != layout.getGlyphId(0);
+        }
+        return true;
+    }
+
+    static jfloat doRunAdvance(const Paint* paint, Typeface* typeface, const jchar buf[],
+            jint start, jint count, jint bufSize, jboolean isRtl, jint offset) {
+        int bidiFlags = isRtl ? kBidi_Force_RTL : kBidi_Force_LTR;
+        if (offset == start + count) {
+            return MinikinUtils::measureText(paint, bidiFlags, typeface, buf, start, count,
+                    bufSize, nullptr);
+        }
+        std::unique_ptr<float[]> advancesArray(new float[count]);
+        MinikinUtils::measureText(paint, bidiFlags, typeface, buf, start, count, bufSize,
+                advancesArray.get());
+        return getRunAdvance(advancesArray.get(), buf, start, count, offset);
+    }
+
+    static jfloat getRunAdvance___CIIIIZI_F(JNIEnv *env, jclass, jlong paintHandle,
+            jlong typefaceHandle, jcharArray text, jint start, jint end, jint contextStart,
+            jint contextEnd, jboolean isRtl, jint offset) {
+        const Paint* paint = reinterpret_cast<Paint*>(paintHandle);
+        Typeface* typeface = reinterpret_cast<Typeface*>(typefaceHandle);
+        jchar* textArray = (jchar*) env->GetPrimitiveArrayCritical(text, NULL);
+        jfloat result = doRunAdvance(paint, typeface, textArray + contextStart,
+                start - contextStart, end - start, contextEnd - contextStart, isRtl,
+                offset - contextStart);
+        env->ReleasePrimitiveArrayCritical(text, textArray, JNI_ABORT);
+        return result;
+    }
+
+    static jint doOffsetForAdvance(const Paint* paint, Typeface* typeface, const jchar buf[],
+            jint start, jint count, jint bufSize, jboolean isRtl, jfloat advance) {
+        int bidiFlags = isRtl ? kBidi_Force_RTL : kBidi_Force_LTR;
+        std::unique_ptr<float[]> advancesArray(new float[count]);
+        MinikinUtils::measureText(paint, bidiFlags, typeface, buf, start, count, bufSize,
+                advancesArray.get());
+        return getOffsetForAdvance(advancesArray.get(), buf, start, count, advance);
+    }
+
+    static jint getOffsetForAdvance___CIIIIZF_I(JNIEnv *env, jclass, jlong paintHandle,
+            jlong typefaceHandle, jcharArray text, jint start, jint end, jint contextStart,
+            jint contextEnd, jboolean isRtl, jfloat advance) {
+        const Paint* paint = reinterpret_cast<Paint*>(paintHandle);
+        Typeface* typeface = reinterpret_cast<Typeface*>(typefaceHandle);
+        jchar* textArray = (jchar*) env->GetPrimitiveArrayCritical(text, NULL);
+        jint result = doOffsetForAdvance(paint, typeface, textArray + contextStart,
+                start - contextStart, end - start, contextEnd - contextStart, isRtl, advance);
+        result += contextStart;
+        env->ReleasePrimitiveArrayCritical(text, textArray, JNI_ABORT);
+        return result;
+    }
+
+}; // namespace PaintGlue
+
+static const JNINativeMethod methods[] = {
+    {"nGetNativeFinalizer", "()J", (void*) PaintGlue::getNativeFinalizer},
+    {"nInit","()J", (void*) PaintGlue::init},
+    {"nInitWithPaint","(J)J", (void*) PaintGlue::initWithPaint},
+
+    {"nReset","!(J)V", (void*) PaintGlue::reset},
+    {"nSet","!(JJ)V", (void*) PaintGlue::assign},
+    {"nGetFlags","!(J)I", (void*) PaintGlue::getFlags},
+    {"nSetFlags","!(JI)V", (void*) PaintGlue::setFlags},
+    {"nGetHinting","!(J)I", (void*) PaintGlue::getHinting},
+    {"nSetHinting","!(JI)V", (void*) PaintGlue::setHinting},
+    {"nSetAntiAlias","!(JZ)V", (void*) PaintGlue::setAntiAlias},
+    {"nSetSubpixelText","!(JZ)V", (void*) PaintGlue::setSubpixelText},
+    {"nSetLinearText","!(JZ)V", (void*) PaintGlue::setLinearText},
+    {"nSetUnderlineText","!(JZ)V", (void*) PaintGlue::setUnderlineText},
+    {"nSetStrikeThruText","!(JZ)V", (void*) PaintGlue::setStrikeThruText},
+    {"nSetFakeBoldText","!(JZ)V", (void*) PaintGlue::setFakeBoldText},
+    {"nSetFilterBitmap","!(JZ)V", (void*) PaintGlue::setFilterBitmap},
+    {"nSetDither","!(JZ)V", (void*) PaintGlue::setDither},
+    {"nGetStyle","!(J)I", (void*) PaintGlue::getStyle},
+    {"nSetStyle","!(JI)V", (void*) PaintGlue::setStyle},
+    {"nGetColor","!(J)I", (void*) PaintGlue::getColor},
+    {"nSetColor","!(JI)V", (void*) PaintGlue::setColor},
+    {"nGetAlpha","!(J)I", (void*) PaintGlue::getAlpha},
+    {"nSetAlpha","!(JI)V", (void*) PaintGlue::setAlpha},
+    {"nGetStrokeWidth","!(J)F", (void*) PaintGlue::getStrokeWidth},
+    {"nSetStrokeWidth","!(JF)V", (void*) PaintGlue::setStrokeWidth},
+    {"nGetStrokeMiter","!(J)F", (void*) PaintGlue::getStrokeMiter},
+    {"nSetStrokeMiter","!(JF)V", (void*) PaintGlue::setStrokeMiter},
+    {"nGetStrokeCap","!(J)I", (void*) PaintGlue::getStrokeCap},
+    {"nSetStrokeCap","!(JI)V", (void*) PaintGlue::setStrokeCap},
+    {"nGetStrokeJoin","!(J)I", (void*) PaintGlue::getStrokeJoin},
+    {"nSetStrokeJoin","!(JI)V", (void*) PaintGlue::setStrokeJoin},
+    {"nGetFillPath","!(JJJ)Z", (void*) PaintGlue::getFillPath},
+    {"nSetShader","!(JJ)J", (void*) PaintGlue::setShader},
+    {"nSetColorFilter","!(JJ)J", (void*) PaintGlue::setColorFilter},
+    {"nSetXfermode","!(JJ)J", (void*) PaintGlue::setXfermode},
+    {"nSetPathEffect","!(JJ)J", (void*) PaintGlue::setPathEffect},
+    {"nSetMaskFilter","!(JJ)J", (void*) PaintGlue::setMaskFilter},
+    {"nSetTypeface","!(JJ)J", (void*) PaintGlue::setTypeface},
+    {"nSetRasterizer","!(JJ)J", (void*) PaintGlue::setRasterizer},
+    {"nGetTextAlign","!(J)I", (void*) PaintGlue::getTextAlign},
+    {"nSetTextAlign","!(JI)V", (void*) PaintGlue::setTextAlign},
+    {"nSetTextLocales","!(JLjava/lang/String;)I", (void*) PaintGlue::setTextLocales},
+    {"nSetTextLocalesByMinikinLangListId","!(JI)V",
+            (void*) PaintGlue::setTextLocalesByMinikinLangListId},
+    {"nIsElegantTextHeight","!(J)Z", (void*) PaintGlue::isElegantTextHeight},
+    {"nSetElegantTextHeight","!(JZ)V", (void*) PaintGlue::setElegantTextHeight},
+    {"nGetTextSize","!(J)F", (void*) PaintGlue::getTextSize},
+    {"nSetTextSize","!(JF)V", (void*) PaintGlue::setTextSize},
+    {"nGetTextScaleX","!(J)F", (void*) PaintGlue::getTextScaleX},
+    {"nSetTextScaleX","!(JF)V", (void*) PaintGlue::setTextScaleX},
+    {"nGetTextSkewX","!(J)F", (void*) PaintGlue::getTextSkewX},
+    {"nSetTextSkewX","!(JF)V", (void*) PaintGlue::setTextSkewX},
+    {"nGetLetterSpacing","!(J)F", (void*) PaintGlue::getLetterSpacing},
+    {"nSetLetterSpacing","!(JF)V", (void*) PaintGlue::setLetterSpacing},
+    {"nSetFontFeatureSettings","(JLjava/lang/String;)V",
+            (void*) PaintGlue::setFontFeatureSettings},
+    {"nGetHyphenEdit", "!(J)I", (void*) PaintGlue::getHyphenEdit},
+    {"nSetHyphenEdit", "!(JI)V", (void*) PaintGlue::setHyphenEdit},
+    {"nAscent","!(JJ)F", (void*) PaintGlue::ascent},
+    {"nDescent","!(JJ)F", (void*) PaintGlue::descent},
+
+    {"nGetFontMetrics", "!(JJLandroid/graphics/Paint$FontMetrics;)F",
+            (void*)PaintGlue::getFontMetrics},
+    {"nGetFontMetricsInt", "!(JJLandroid/graphics/Paint$FontMetricsInt;)I",
+            (void*)PaintGlue::getFontMetricsInt},
+
+    {"nBreakText","(JJ[CIIFI[F)I", (void*) PaintGlue::breakTextC},
+    {"nBreakText","(JJLjava/lang/String;ZFI[F)I", (void*) PaintGlue::breakTextS},
+    {"nGetTextAdvances","(JJ[CIIIII[FI)F",
+            (void*) PaintGlue::getTextAdvances___CIIIII_FI},
+    {"nGetTextAdvances","(JJLjava/lang/String;IIIII[FI)F",
+            (void*) PaintGlue::getTextAdvances__StringIIIII_FI},
+
+    {"nGetTextRunCursor", "(J[CIIIII)I", (void*) PaintGlue::getTextRunCursor___C},
+    {"nGetTextRunCursor", "(JLjava/lang/String;IIIII)I",
+            (void*) PaintGlue::getTextRunCursor__String},
+    {"nGetTextPath", "(JJI[CIIFFJ)V", (void*) PaintGlue::getTextPath___C},
+    {"nGetTextPath", "(JJILjava/lang/String;IIFFJ)V", (void*) PaintGlue::getTextPath__String},
+    {"nGetStringBounds", "(JJLjava/lang/String;IIILandroid/graphics/Rect;)V",
+            (void*) PaintGlue::getStringBounds },
+    {"nGetCharArrayBounds", "(JJ[CIIILandroid/graphics/Rect;)V",
+            (void*) PaintGlue::getCharArrayBounds },
+    {"nHasGlyph", "(JJILjava/lang/String;)Z", (void*) PaintGlue::hasGlyph },
+    {"nGetRunAdvance", "(JJ[CIIIIZI)F", (void*) PaintGlue::getRunAdvance___CIIIIZI_F},
+    {"nGetOffsetForAdvance", "(JJ[CIIIIZF)I",
+            (void*) PaintGlue::getOffsetForAdvance___CIIIIZF_I},
+
+    {"nSetShadowLayer", "!(JFFFI)V", (void*)PaintGlue::setShadowLayer},
+    {"nHasShadowLayer", "!(J)Z", (void*)PaintGlue::hasShadowLayer}
 };
-
-static JNINativeMethod methods[] = {
-    {"finalizer", "(J)V", (void*) SkPaintGlue::finalizer},
-    {"native_init","()J", (void*) SkPaintGlue::init},
-    {"native_initWithPaint","(J)J", (void*) SkPaintGlue::initWithPaint},
-    {"native_reset","(J)V", (void*) SkPaintGlue::reset},
-    {"native_set","(JJ)V", (void*) SkPaintGlue::assign},
-    {"getFlags","()I", (void*) SkPaintGlue::getFlags},
-    {"setFlags","(I)V", (void*) SkPaintGlue::setFlags},
-    {"getHinting","()I", (void*) SkPaintGlue::getHinting},
-    {"setHinting","(I)V", (void*) SkPaintGlue::setHinting},
-    {"setAntiAlias","(Z)V", (void*) SkPaintGlue::setAntiAlias},
-    {"setSubpixelText","(Z)V", (void*) SkPaintGlue::setSubpixelText},
-    {"setLinearText","(Z)V", (void*) SkPaintGlue::setLinearText},
-    {"setUnderlineText","(Z)V", (void*) SkPaintGlue::setUnderlineText},
-    {"setStrikeThruText","(Z)V", (void*) SkPaintGlue::setStrikeThruText},
-    {"setFakeBoldText","(Z)V", (void*) SkPaintGlue::setFakeBoldText},
-    {"setFilterBitmap","(Z)V", (void*) SkPaintGlue::setFilterBitmap},
-    {"setDither","(Z)V", (void*) SkPaintGlue::setDither},
-    {"native_getStyle","(J)I", (void*) SkPaintGlue::getStyle},
-    {"native_setStyle","(JI)V", (void*) SkPaintGlue::setStyle},
-    {"getColor","()I", (void*) SkPaintGlue::getColor},
-    {"setColor","(I)V", (void*) SkPaintGlue::setColor},
-    {"getAlpha","()I", (void*) SkPaintGlue::getAlpha},
-    {"setAlpha","(I)V", (void*) SkPaintGlue::setAlpha},
-    {"getStrokeWidth","()F", (void*) SkPaintGlue::getStrokeWidth},
-    {"setStrokeWidth","(F)V", (void*) SkPaintGlue::setStrokeWidth},
-    {"getStrokeMiter","()F", (void*) SkPaintGlue::getStrokeMiter},
-    {"setStrokeMiter","(F)V", (void*) SkPaintGlue::setStrokeMiter},
-    {"native_getStrokeCap","(J)I", (void*) SkPaintGlue::getStrokeCap},
-    {"native_setStrokeCap","(JI)V", (void*) SkPaintGlue::setStrokeCap},
-    {"native_getStrokeJoin","(J)I", (void*) SkPaintGlue::getStrokeJoin},
-    {"native_setStrokeJoin","(JI)V", (void*) SkPaintGlue::setStrokeJoin},
-    {"native_getFillPath","(JJJ)Z", (void*) SkPaintGlue::getFillPath},
-    {"native_setShader","(JJ)J", (void*) SkPaintGlue::setShader},
-    {"native_setColorFilter","(JJ)J", (void*) SkPaintGlue::setColorFilter},
-    {"native_setXfermode","(JJ)J", (void*) SkPaintGlue::setXfermode},
-    {"native_setPathEffect","(JJ)J", (void*) SkPaintGlue::setPathEffect},
-    {"native_setMaskFilter","(JJ)J", (void*) SkPaintGlue::setMaskFilter},
-    {"native_setTypeface","(JJ)J", (void*) SkPaintGlue::setTypeface},
-    {"native_setRasterizer","(JJ)J", (void*) SkPaintGlue::setRasterizer},
-    {"native_getTextAlign","(J)I", (void*) SkPaintGlue::getTextAlign},
-    {"native_setTextAlign","(JI)V", (void*) SkPaintGlue::setTextAlign},
-    {"native_setTextLocale","(JLjava/lang/String;)V", (void*) SkPaintGlue::setTextLocale},
-    {"getTextSize","()F", (void*) SkPaintGlue::getTextSize},
-    {"setTextSize","(F)V", (void*) SkPaintGlue::setTextSize},
-    {"getTextScaleX","()F", (void*) SkPaintGlue::getTextScaleX},
-    {"setTextScaleX","(F)V", (void*) SkPaintGlue::setTextScaleX},
-    {"getTextSkewX","()F", (void*) SkPaintGlue::getTextSkewX},
-    {"setTextSkewX","(F)V", (void*) SkPaintGlue::setTextSkewX},
-    {"ascent","()F", (void*) SkPaintGlue::ascent},
-    {"descent","()F", (void*) SkPaintGlue::descent},
-    {"getFontMetrics", "(Landroid/graphics/Paint$FontMetrics;)F", (void*)SkPaintGlue::getFontMetrics},
-    {"getFontMetricsInt", "(Landroid/graphics/Paint$FontMetricsInt;)I", (void*)SkPaintGlue::getFontMetricsInt},
-    {"native_measureText","([CIII)F", (void*) SkPaintGlue::measureText_CIII},
-    {"native_measureText","(Ljava/lang/String;I)F", (void*) SkPaintGlue::measureText_StringI},
-    {"native_measureText","(Ljava/lang/String;III)F", (void*) SkPaintGlue::measureText_StringIII},
-    {"native_breakText","([CIIFI[F)I", (void*) SkPaintGlue::breakTextC},
-    {"native_breakText","(Ljava/lang/String;ZFI[F)I", (void*) SkPaintGlue::breakTextS},
-    {"native_getTextWidths","(J[CIII[F)I", (void*) SkPaintGlue::getTextWidths___CIII_F},
-    {"native_getTextWidths","(JLjava/lang/String;III[F)I", (void*) SkPaintGlue::getTextWidths__StringIII_F},
-    {"native_getTextRunAdvances","(J[CIIIII[FI)F",
-        (void*) SkPaintGlue::getTextRunAdvances___CIIIII_FI},
-    {"native_getTextRunAdvances","(JLjava/lang/String;IIIII[FI)F",
-        (void*) SkPaintGlue::getTextRunAdvances__StringIIIII_FI},
-
-
-    {"native_getTextGlyphs","(JLjava/lang/String;IIIII[C)I",
-        (void*) SkPaintGlue::getTextGlyphs__StringIIIII_C},
-    {"native_getTextRunCursor", "(J[CIIIII)I", (void*) SkPaintGlue::getTextRunCursor___C},
-    {"native_getTextRunCursor", "(JLjava/lang/String;IIIII)I",
-        (void*) SkPaintGlue::getTextRunCursor__String},
-    {"native_getTextPath","(JI[CIIFFJ)V", (void*) SkPaintGlue::getTextPath___C},
-    {"native_getTextPath","(JILjava/lang/String;IIFFJ)V", (void*) SkPaintGlue::getTextPath__String},
-    {"nativeGetStringBounds", "(JLjava/lang/String;IIILandroid/graphics/Rect;)V",
-                                        (void*) SkPaintGlue::getStringBounds },
-    {"nativeGetCharArrayBounds", "(J[CIIILandroid/graphics/Rect;)V",
-                                    (void*) SkPaintGlue::getCharArrayBounds },
-    {"nSetShadowLayer", "(FFFI)V", (void*)SkPaintGlue::setShadowLayer}
-};
-
-static jfieldID req_fieldID(jfieldID id) {
-    SkASSERT(id);
-    return id;
-}
 
 int register_android_graphics_Paint(JNIEnv* env) {
-    gFontMetrics_class = env->FindClass("android/graphics/Paint$FontMetrics");
-    SkASSERT(gFontMetrics_class);
-    gFontMetrics_class = (jclass)env->NewGlobalRef(gFontMetrics_class);
+    gFontMetrics_class = FindClassOrDie(env, "android/graphics/Paint$FontMetrics");
+    gFontMetrics_class = MakeGlobalRefOrDie(env, gFontMetrics_class);
 
-    gFontMetrics_fieldID.top = req_fieldID(env->GetFieldID(gFontMetrics_class, "top", "F"));
-    gFontMetrics_fieldID.ascent = req_fieldID(env->GetFieldID(gFontMetrics_class, "ascent", "F"));
-    gFontMetrics_fieldID.descent = req_fieldID(env->GetFieldID(gFontMetrics_class, "descent", "F"));
-    gFontMetrics_fieldID.bottom = req_fieldID(env->GetFieldID(gFontMetrics_class, "bottom", "F"));
-    gFontMetrics_fieldID.leading = req_fieldID(env->GetFieldID(gFontMetrics_class, "leading", "F"));
+    gFontMetrics_fieldID.top = GetFieldIDOrDie(env, gFontMetrics_class, "top", "F");
+    gFontMetrics_fieldID.ascent = GetFieldIDOrDie(env, gFontMetrics_class, "ascent", "F");
+    gFontMetrics_fieldID.descent = GetFieldIDOrDie(env, gFontMetrics_class, "descent", "F");
+    gFontMetrics_fieldID.bottom = GetFieldIDOrDie(env, gFontMetrics_class, "bottom", "F");
+    gFontMetrics_fieldID.leading = GetFieldIDOrDie(env, gFontMetrics_class, "leading", "F");
 
-    gFontMetricsInt_class = env->FindClass("android/graphics/Paint$FontMetricsInt");
-    SkASSERT(gFontMetricsInt_class);
-    gFontMetricsInt_class = (jclass)env->NewGlobalRef(gFontMetricsInt_class);
+    gFontMetricsInt_class = FindClassOrDie(env, "android/graphics/Paint$FontMetricsInt");
+    gFontMetricsInt_class = MakeGlobalRefOrDie(env, gFontMetricsInt_class);
 
-    gFontMetricsInt_fieldID.top = req_fieldID(env->GetFieldID(gFontMetricsInt_class, "top", "I"));
-    gFontMetricsInt_fieldID.ascent = req_fieldID(env->GetFieldID(gFontMetricsInt_class, "ascent", "I"));
-    gFontMetricsInt_fieldID.descent = req_fieldID(env->GetFieldID(gFontMetricsInt_class, "descent", "I"));
-    gFontMetricsInt_fieldID.bottom = req_fieldID(env->GetFieldID(gFontMetricsInt_class, "bottom", "I"));
-    gFontMetricsInt_fieldID.leading = req_fieldID(env->GetFieldID(gFontMetricsInt_class, "leading", "I"));
+    gFontMetricsInt_fieldID.top = GetFieldIDOrDie(env, gFontMetricsInt_class, "top", "I");
+    gFontMetricsInt_fieldID.ascent = GetFieldIDOrDie(env, gFontMetricsInt_class, "ascent", "I");
+    gFontMetricsInt_fieldID.descent = GetFieldIDOrDie(env, gFontMetricsInt_class, "descent", "I");
+    gFontMetricsInt_fieldID.bottom = GetFieldIDOrDie(env, gFontMetricsInt_class, "bottom", "I");
+    gFontMetricsInt_fieldID.leading = GetFieldIDOrDie(env, gFontMetricsInt_class, "leading", "I");
 
-    int result = AndroidRuntime::registerNativeMethods(env, "android/graphics/Paint", methods,
-        sizeof(methods) / sizeof(methods[0]));
-    return result;
+    return RegisterMethodsOrDie(env, "android/graphics/Paint", methods, NELEM(methods));
 }
 
 }

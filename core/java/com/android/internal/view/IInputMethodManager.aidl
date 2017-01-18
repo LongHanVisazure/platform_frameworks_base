@@ -16,11 +16,13 @@
 
 package com.android.internal.view;
 
+import android.net.Uri;
 import android.os.ResultReceiver;
 import android.text.style.SuggestionSpan;
 import android.view.inputmethod.InputMethodInfo;
 import android.view.inputmethod.InputMethodSubtype;
 import android.view.inputmethod.EditorInfo;
+import com.android.internal.inputmethod.IInputContentUriToken;
 import com.android.internal.view.InputBindResult;
 import com.android.internal.view.IInputContext;
 import com.android.internal.view.IInputMethodClient;
@@ -32,7 +34,9 @@ import com.android.internal.view.IInputMethodClient;
  * this file.
  */
 interface IInputMethodManager {
+    // TODO: Use ParceledListSlice instead
     List<InputMethodInfo> getInputMethodList();
+    // TODO: Use ParceledListSlice instead
     List<InputMethodInfo> getEnabledInputMethodList();
     List<InputMethodSubtype> getEnabledInputMethodSubtypeList(in String imiId,
             boolean allowsImplicitlySelectedSubtypes);
@@ -43,21 +47,23 @@ interface IInputMethodManager {
     void addClient(in IInputMethodClient client,
             in IInputContext inputContext, int uid, int pid);
     void removeClient(in IInputMethodClient client);
-            
-    InputBindResult startInput(in IInputMethodClient client,
-            IInputContext inputContext, in EditorInfo attribute, int controlFlags);
+
     void finishInput(in IInputMethodClient client);
     boolean showSoftInput(in IInputMethodClient client, int flags,
             in ResultReceiver resultReceiver);
     boolean hideSoftInput(in IInputMethodClient client, int flags,
             in ResultReceiver resultReceiver);
-    // Report that a window has gained focus.  If 'attribute' is non-null,
-    // this will also do a startInput.
-    InputBindResult windowGainedFocus(in IInputMethodClient client, in IBinder windowToken,
-            int controlFlags, int softInputMode, int windowFlags,
-            in EditorInfo attribute, IInputContext inputContext);
+    // If windowToken is null, this just does startInput().  Otherwise this reports that a window
+    // has gained focus, and if 'attribute' is non-null then also does startInput.
+    InputBindResult startInputOrWindowGainedFocus(
+            /* @InputMethodClient.StartInputReason */ int startInputReason,
+            in IInputMethodClient client, in IBinder windowToken, int controlFlags,
+            int softInputMode, int windowFlags, in EditorInfo attribute,
+            IInputContext inputContext,
+            /* @InputConnectionInspector.MissingMethodFlags */ int missingMethodFlags);
 
-    void showInputMethodPickerFromClient(in IInputMethodClient client);
+    void showInputMethodPickerFromClient(in IInputMethodClient client,
+            int auxiliarySubtypeMode);
     void showInputMethodAndSubtypeEnablerFromClient(in IInputMethodClient client, String topId);
     void setInputMethod(in IBinder token, String id);
     void setInputMethodAndSubtype(in IBinder token, String id, in InputMethodSubtype subtype);
@@ -73,5 +79,12 @@ interface IInputMethodManager {
     boolean switchToNextInputMethod(in IBinder token, boolean onlyCurrentIme);
     boolean shouldOfferSwitchingToNextInputMethod(in IBinder token);
     boolean setInputMethodEnabled(String id, boolean enabled);
-    oneway void setAdditionalInputMethodSubtypes(String id, in InputMethodSubtype[] subtypes);
+    void setAdditionalInputMethodSubtypes(String id, in InputMethodSubtype[] subtypes);
+    int getInputMethodWindowVisibleHeight();
+    void clearLastInputMethodWindowForTransition(in IBinder token);
+
+    IInputContentUriToken createInputContentUriToken(in IBinder token, in Uri contentUri,
+            in String packageName);
+
+    oneway void notifyUserAction(int sequenceNumber);
 }

@@ -20,7 +20,7 @@
 
 #include <JNIHelp.h>
 #include <jni.h>
-#include <android_runtime/AndroidRuntime.h>
+#include "core_jni_helpers.h"
 
 #include <utils/Log.h>
 #include <utils/String8.h>
@@ -35,7 +35,15 @@ extern "C" void get_malloc_leak_info(uint8_t** info, size_t* overallSize,
 
 extern "C" void free_malloc_leak_info(uint8_t* info);
 
+#define DDMS_HEADER_SIGNATURE 0x812345dd
+#define DDMS_VERSION 2
+
 struct Header {
+#if defined(__LP64__)
+    uint32_t signature;
+    uint16_t version;
+    uint16_t pointerSize;
+#endif
     size_t mapSize;
     size_t allocSize;
     size_t allocInfoSize;
@@ -74,8 +82,14 @@ static jbyteArray DdmHandleNativeHeap_getLeakInfo(JNIEnv* env, jobject) {
     get_malloc_leak_info(&allocBytes, &header.allocSize, &header.allocInfoSize,
                          &header.totalMemory, &header.backtraceSize);
 
-    ALOGD("*** mapSize: %d allocSize: %d allocInfoSize: %d totalMemory: %d",
+    ALOGD("*** mapSize: %zu allocSize: %zu allocInfoSize: %zu totalMemory: %zu",
           header.mapSize, header.allocSize, header.allocInfoSize, header.totalMemory);
+
+#if defined(__LP64__)
+    header.signature = DDMS_HEADER_SIGNATURE;
+    header.version = DDMS_VERSION;
+    header.pointerSize = sizeof(void*);
+#endif
 
     jbyteArray array = env->NewByteArray(sizeof(Header) + header.mapSize + header.allocSize);
     if (array != NULL) {
@@ -91,12 +105,13 @@ static jbyteArray DdmHandleNativeHeap_getLeakInfo(JNIEnv* env, jobject) {
     return array;
 }
 
-static JNINativeMethod method_table[] = {
+static const JNINativeMethod method_table[] = {
     { "getLeakInfo", "()[B", (void*) DdmHandleNativeHeap_getLeakInfo },
 };
 
 int register_android_ddm_DdmHandleNativeHeap(JNIEnv* env) {
-    return AndroidRuntime::registerNativeMethods(env, "android/ddm/DdmHandleNativeHeap", method_table, NELEM(method_table));
+    return RegisterMethodsOrDie(env, "android/ddm/DdmHandleNativeHeap", method_table,
+                                NELEM(method_table));
 }
 
 };

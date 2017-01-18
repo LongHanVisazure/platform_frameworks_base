@@ -16,6 +16,7 @@
 
 package android.location;
 
+import android.annotation.SystemApi;
 import android.os.Parcel;
 import android.os.Parcelable;
 import android.os.SystemClock;
@@ -84,6 +85,7 @@ import android.util.TimeUtils;
  *
  * @hide
  */
+@SystemApi
 public final class LocationRequest implements Parcelable {
     /**
      * Used with {@link #setQuality} to request the most accurate locations available.
@@ -166,6 +168,7 @@ public final class LocationRequest implements Parcelable {
     }
 
     /** @hide */
+    @SystemApi
     public static LocationRequest createFromDeprecatedProvider(String provider, long minTime,
             float minDistance, boolean singleShot) {
         if (minTime < 0) minTime = 0;
@@ -191,6 +194,7 @@ public final class LocationRequest implements Parcelable {
     }
 
     /** @hide */
+    @SystemApi
     public static LocationRequest createFromDeprecatedCriteria(Criteria criteria, long minTime,
             float minDistance, boolean singleShot) {
         if (minTime < 0) minTime = 0;
@@ -208,6 +212,7 @@ public final class LocationRequest implements Parcelable {
                 switch (criteria.getPowerRequirement()) {
                     case Criteria.POWER_HIGH:
                         quality = POWER_HIGH;
+                        break;
                     default:
                         quality = POWER_LOW;
                 }
@@ -288,7 +293,7 @@ public final class LocationRequest implements Parcelable {
      * no location sources are available), or you may receive them
      * slower than requested. You may also receive them faster than
      * requested (if other applications are requesting location at a
-     * faster interval). The fastest rate that that you will receive
+     * faster interval). The fastest rate that you will receive
      * updates can be controlled with {@link #setFastestInterval}.
      *
      * <p>Applications with only the coarse location permission may have their
@@ -475,6 +480,7 @@ public final class LocationRequest implements Parcelable {
 
 
     /** @hide */
+    @SystemApi
     public LocationRequest setProvider(String provider) {
         checkProvider(provider);
         mProvider = provider;
@@ -482,11 +488,13 @@ public final class LocationRequest implements Parcelable {
     }
 
     /** @hide */
+    @SystemApi
     public String getProvider() {
         return mProvider;
     }
 
     /** @hide */
+    @SystemApi
     public LocationRequest setSmallestDisplacement(float meters) {
         checkDisplacement(meters);
         mSmallestDisplacement = meters;
@@ -494,6 +502,7 @@ public final class LocationRequest implements Parcelable {
     }
 
     /** @hide */
+    @SystemApi
     public float getSmallestDisplacement() {
         return mSmallestDisplacement;
     }
@@ -508,11 +517,13 @@ public final class LocationRequest implements Parcelable {
      * @param workSource WorkSource defining power blame for this location request.
      * @hide
      */
+    @SystemApi
     public void setWorkSource(WorkSource workSource) {
         mWorkSource = workSource;
     }
 
     /** @hide */
+    @SystemApi
     public WorkSource getWorkSource() {
         return mWorkSource;
     }
@@ -531,11 +542,13 @@ public final class LocationRequest implements Parcelable {
      * @see android.app.AppOpsManager
      * @hide
      */
+    @SystemApi
     public void setHideFromAppOps(boolean hideFromAppOps) {
         mHideFromAppOps = hideFromAppOps;
     }
 
     /** @hide */
+    @SystemApi
     public boolean getHideFromAppOps() {
         return mHideFromAppOps;
     }

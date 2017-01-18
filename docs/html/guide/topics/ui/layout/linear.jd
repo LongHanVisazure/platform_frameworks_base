@@ -1,5 +1,5 @@
 page.title=Linear Layout
-page.tags="linearlayout"
+page.tags=linearlayout
 @jd:body
 
 <div id="qv-wrapper">
@@ -58,8 +58,8 @@ href="{@docRoot}reference/android/widget/LinearLayout.LayoutParams.html#attr_and
 href="{@docRoot}reference/android/widget/LinearLayout.LayoutParams.html#attr_android:layout_weight"
 >{@code android:layout_weight}</a> attribute.
 This attribute assigns an "importance" value to a view in
-terms of how much space is should occupy on the screen. A larger weight value allows it to expand
-to fill any remaining space in the parent view. 
+terms of how much space it should occupy on the screen. A larger weight value allows it to expand
+to fill any remaining space in the parent view.
 Child views can specify a weight value, and then any remaining space in the view group is
 assigned to children in the proportion of their declared weight. Default
 weight is zero.</p>
@@ -82,21 +82,21 @@ share the rest equally.</p>
 <pre>
 &lt;?xml version="1.0" encoding="utf-8"?>
 &lt;LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="fill_parent"
-    android:layout_height="fill_parent"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
     android:paddingLeft="16dp"
     android:paddingRight="16dp"
     android:orientation="vertical" >
     &lt;EditText
-        android:layout_width="fill_parent"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:hint="@string/to" />
     &lt;EditText
-        android:layout_width="fill_parent"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:hint="@string/subject" />
     &lt;EditText
-        android:layout_width="fill_parent"
+        android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
         android:gravity="top"

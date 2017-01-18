@@ -18,8 +18,6 @@ package android.os;
 
 import java.util.ArrayList;
 
-import android.util.Log;
-
 
 /**
  * Gives access to the system properties store.  The system properties
@@ -41,6 +39,7 @@ public class SystemProperties
     private static native boolean native_get_boolean(String key, boolean def);
     private static native void native_set(String key, String def);
     private static native void native_add_change_callback();
+    private static native void native_report_sysprop_change();
 
     /**
      * Get the value for the given key.
@@ -152,5 +151,12 @@ public class SystemProperties
                 callbacks.get(i).run();
             }
         }
+    }
+
+    /*
+     * Notifies listeners that a system property has changed
+     */
+    public static void reportSyspropChanged() {
+        native_report_sysprop_change();
     }
 }

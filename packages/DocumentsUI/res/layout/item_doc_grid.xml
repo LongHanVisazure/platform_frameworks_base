@@ -14,115 +14,124 @@
      limitations under the License.
 -->
 
-<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="@dimen/grid_height"
-    android:background="@drawable/item_doc_grid"
-    android:foreground="@drawable/item_background">
+    android:layout_height="wrap_content"
+    android:layout_margin="@dimen/grid_item_margin"
+    android:background="@color/item_doc_background"
+    android:elevation="@dimen/grid_item_elevation"
+    android:focusable="true">
 
-    <LinearLayout
+    <!-- Main item thumbnail.  Comprised of two overlapping images, the
+         visibility of which is controlled by code in
+         DirectoryFragment.java. -->
+
+    <FrameLayout
+        android:id="@+id/thumbnail"
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:paddingBottom="6dp"
-        android:orientation="vertical">
+        android:layout_height="wrap_content">
 
-        <FrameLayout
-            android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1"
-            android:layout_marginBottom="6dp"
-            android:background="#fff"
-            android:foreground="@drawable/ic_grid_gradient_bg"
-            android:foregroundGravity="fill">
-
-            <ImageView
-                android:id="@+id/icon_mime"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:scaleType="centerInside"
-                android:contentDescription="@null" />
-
-            <ImageView
-                android:id="@+id/icon_thumb"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:scaleType="centerCrop"
-                android:contentDescription="@null" />
-
-        </FrameLayout>
-
-        <LinearLayout
-            android:id="@+id/line1"
+        <com.android.documentsui.GridItemThumbnail
+            android:id="@+id/icon_thumb"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:baselineAligned="false"
-            android:paddingStart="?android:attr/listPreferredItemPaddingStart"
-            android:paddingEnd="?android:attr/listPreferredItemPaddingEnd">
+            android:scaleType="centerCrop"
+            android:contentDescription="@null" />
 
-            <TextView
-                android:id="@android:id/title"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:singleLine="true"
-                android:ellipsize="middle"
-                android:textAlignment="viewStart"
-                style="@style/TextAppearance.Medium" />
+        <com.android.documentsui.GridItemThumbnail
+            android:id="@+id/icon_mime_lg"
+            android:layout_width="@dimen/icon_size"
+            android:layout_height="@dimen/icon_size"
+            android:layout_gravity="center"
+            android:scaleType="fitCenter"
+            android:contentDescription="@null" />
 
-            <ImageView
-                android:id="@android:id/icon1"
-                android:layout_width="@dimen/root_icon_size"
-                android:layout_height="@dimen/root_icon_size"
-                android:layout_marginStart="8dp"
-                android:scaleType="centerInside"
-                android:contentDescription="@null" />
+    </FrameLayout>
 
-        </LinearLayout>
+    <!-- Item nameplate.  Has a mime-type icon and some text fields (title,
+         size, mod-time, etc). -->
 
-        <LinearLayout
-            android:id="@+id/line2"
-            android:layout_width="match_parent"
+    <RelativeLayout
+        android:id="@+id/nameplate"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_below="@id/thumbnail"
+        android:paddingTop="8dp"
+        android:paddingBottom="8dp"
+        android:paddingLeft="12dp"
+        android:paddingRight="12dp">
+
+        <ImageView
+            android:id="@+id/icon_mime_sm"
+            android:layout_width="@dimen/grid_item_icon_size"
+            android:layout_height="@dimen/grid_item_icon_size"
+            android:layout_marginEnd="8dp"
+            android:layout_alignParentStart="true"
+            android:layout_centerVertical="true"
+            android:scaleType="center"
+            android:contentDescription="@null"/>
+
+        <ImageView
+            android:id="@+id/icon_check"
+            android:src="@drawable/ic_check_circle"
+            android:alpha="0"
+            android:layout_width="@dimen/check_icon_size"
+            android:layout_height="@dimen/check_icon_size"
+            android:layout_marginEnd="8dp"
+            android:layout_alignParentStart="true"
+            android:layout_centerVertical="true"
+            android:scaleType="fitCenter"
+            android:contentDescription="@null"/>
+
+        <TextView
+            android:id="@android:id/title"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:baselineAligned="false"
-            android:paddingStart="?android:attr/listPreferredItemPaddingStart"
-            android:paddingEnd="?android:attr/listPreferredItemPaddingEnd">
+            android:layout_alignParentTop="true"
+            android:layout_toEndOf="@id/icon_mime_sm"
+            android:singleLine="true"
+            android:ellipsize="end"
+            android:textAlignment="viewStart"
+            android:textAppearance="@android:style/TextAppearance.Material.Subhead"
+            android:textColor="@color/item_title" />
 
-            <TextView
-                android:id="@+id/date"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="0.5"
-                android:singleLine="true"
-                android:ellipsize="end"
-                android:textAlignment="viewStart"
-                style="@style/TextAppearance.Small" />
+        <TextView
+            android:id="@+id/size"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_toEndOf="@id/icon_mime_sm"
+            android:layout_below="@android:id/title"
+            android:layout_marginEnd="4dp"
+            android:singleLine="true"
+            android:ellipsize="end"
+            android:textAlignment="viewStart"
+            android:textAppearance="@android:style/TextAppearance.Material.Caption"
+            android:textColor="@color/item_details" />
 
-            <TextView
-                android:id="@+id/size"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="0.5"
-                android:layout_marginStart="8dp"
-                android:singleLine="true"
-                android:ellipsize="end"
-                android:textAlignment="viewStart"
-                style="@style/TextAppearance.Small" />
+        <TextView
+            android:id="@+id/date"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_below="@android:id/title"
+            android:layout_toEndOf="@id/size"
+            android:singleLine="true"
+            android:ellipsize="end"
+            android:textAlignment="viewStart"
+            android:textAppearance="@android:style/TextAppearance.Material.Caption"
+            android:textColor="@color/item_details" />
 
-            <ImageView
-                android:id="@android:id/icon2"
-                android:layout_width="@dimen/root_icon_size"
-                android:layout_height="@dimen/root_icon_size"
-                android:layout_marginStart="8dp"
-                android:scaleType="centerInside"
-                android:contentDescription="@null"
-                android:visibility="gone" />
+    </RelativeLayout>
 
-        </LinearLayout>
+    <!-- An overlay that draws the item border when it is focused. -->
+    <View
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_alignBottom="@id/nameplate"
+        android:layout_alignTop="@id/thumbnail"
+        android:layout_alignLeft="@id/thumbnail"
+        android:layout_alignRight="@id/thumbnail"
+        android:contentDescription="@null"
+        android:background="@drawable/item_doc_grid_border"
+        android:duplicateParentState="true" />
 
-    </LinearLayout>
-
-</FrameLayout>
+</RelativeLayout>

@@ -34,9 +34,9 @@
 # made today requires touching the same file, just copy the old
 # touch step and add it to the end of the list.
 #
-# ************************************************
-# NEWER CLEAN STEPS MUST BE AT THE END OF THE LIST
-# ************************************************
+# *****************************************************************
+# NEWER CLEAN STEPS MUST BE AT THE END OF THE LIST ABOVE THE BANNER
+# *****************************************************************
 
 # For example:
 #$(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/APPS/AndroidTests_intermediates)
@@ -171,6 +171,7 @@ $(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/JAVA_LIBRARIES/framew
 $(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/JAVA_LIBRARIES/framework-base_intermediates/src/core/java/android/print/)
 $(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/JAVA_LIBRARIES/framework-base_intermediates/src/core/java/android/printservice/)
 $(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/JAVA_LIBRARIES/framework-base_intermediates/src/packages/services/Proxy/)
+$(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/JAVA_LIBRARIES/framework-base_intermediates)
 $(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/JAVA_LIBRARIES/framework-base_intermediates/src/core/java/android/print/IPrinterDiscoverySessionObserver.*)
 $(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/JAVA_LIBRARIES/framework-base_intermediates/src/core/java/android/print/IPrinterDiscoverySessionClient.*)
 $(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/JAVA_LIBRARIES/framework-base_intermediates/src/core/java/android/os/IBattery*)
@@ -184,7 +185,63 @@ $(call add-clean-step, rm -rf $(PRODUCT_OUT)/system/media/audio/)
 $(call add-clean-step, rm -rf $(PRODUCT_OUT)/system/media/audio/effects/)
 $(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/APPS/framework-res_intermediates)
 $(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/JAVA_LIBRARIES/framework-base_intermediates/src/core/java/android/print/IPrintClient.*)
+$(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/JAVA_LIBRARIES/services_intermediates)
+$(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/JAVA_LIBRARIES/framework-base_intermediates/src/media/java/android/media/IMedia*)
+$(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/JAVA_LIBRARIES/framework-base_intermediates/src/core/java/android/view/IMagnificationCallbacks*)
+$(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/JAVA_LIBRARIES/framework-base_intermediates/src/core/java/android/tv/)
+$(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/JAVA_LIBRARIES/framework-base_intermediates/src/media/java/android/media/)
+$(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/JAVA_LIBRARIES/framework-base_intermediates/src/core/java/android/app)
+$(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/JAVA_LIBRARIES/android_stubs_current_intermediates/src/android/app/wearable)
+$(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/JAVA_LIBRARIES/framework-base_intermediates/src/core/java/android/tv/ITv*)
+$(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/JAVA_LIBRARIES/framework-base_intermediates)
+$(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/JAVA_LIBRARIES/framework-base_intermediates/classes/android/app/task)
+$(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/JAVA_LIBRARIES/framework-base_intermediates/src/core/java/android/app/task)
+$(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/JAVA_LIBRARIES/framework-base_intermediates/classes/android/app/TaskManager)
+$(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/JAVA_LIBRARIES/framework-base_intermediates/src/core/java/android/app/maintenance)
+$(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/JAVA_LIBRARIES/framework-base_intermediates/classes/android/app/maintenance)
+$(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/JAVA_LIBRARIES/framework_intermediates/classes/android/app/maintenance)
+$(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/JAVA_LIBRARIES/android_stubs_current_intermediates/classes/android/app/maintenance)
+$(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/JAVA_LIBRARIES/android_stubs_current_intermediates/src/android/app/maintenance)
+$(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/JAVA_LIBRARIES/services_intermediates)
+$(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/JAVA_LIBRARIES/framework-base_intermediates)
+$(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/JAVA_LIBRARIES/framework-base_intermediates)
+$(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/JAVA_LIBRARIES/framework-base_intermediates/src/core/java/android/app)
+$(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/JAVA_LIBRARIES/framework-base_intermediates)
+$(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/JAVA_LIBRARIES/ims-common_intermediates)
+$(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/JAVA_LIBRARIES/framework2_intermediates)
+$(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/JAVA_LIBRARIES/framework-base_intermediates/src/telecomm/java/com/android/internal/telecom)
+$(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/JAVA_LIBRARIES/framework_intermediates)
+$(call add-clean-step, rm -rf $(PRODUCT_OUT)/system/framework.* $(PRODUCT_OUT)/system/framework2.*)
+$(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/JAVA_LIBRARIES/framework-base_intermediates)
+$(call add-clean-step, rm -rf $(OUT_DIR)/target/common/docs/api-stubs-timestamp)
+$(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/JAVA_LIBRARIES/android_stubs_current_intermediates)
+$(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/JAVA_LIBRARIES/framework_intermediates)
+$(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/JAVA_LIBRARIES/services.core_intermediates)
+$(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/JAVA_LIBRARIES/services_intermediates)
+$(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/JAVA_LIBRARIES/framework_intermediates)
+$(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/JAVA_LIBRARIES/services.core_intermediates)
+$(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/JAVA_LIBRARIES/services_intermediates)
+$(call add-clean-step, rm -rf $(PRODUCT_OUT)/system/bin/inputflinger $(PRODUCT_OUT)/symbols/system/bin/inputflinger)
+$(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/APPS/RsFountainFbo_intermediates)
+$(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/JAVA_LIBRARIES/framework-base_intermediates/src/telecomm/java/com/android/internal/telecomm)
+$(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/JAVA_LIBRARIES/framework_intermediates/src/core/java/com/android/internal/widget/ILockSettingsObserver.java)
+$(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/APPS/SystemUI_intermediates/)
+$(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/JAVA_LIBRARIES/Keyguard_intermediates/)
+$(call add-clean-step, rm -f $(OUT_DIR)/target/product/*/system/framework/android.policy.jar)
+$(call add-clean-step, rm -rf $(PRODUCT_OUT)/system/bin/inputflinger $(PRODUCT_OUT)/symbols/system/bin/inputflinger)
+$(call add-clean-step, rm -rf $(PRODUCT_OUT)/system/lib/libinputflingerhost.so $(PRODUCT_OUT)/system/lib64/libinputflingerhost.so)
+$(call add-clean-step, rm -rf $(PRODUCT_OUT)/symbols/system/lib/libinputflingerhost.so $(PRODUCT_OUT)/symbols/system/lib64/libinputflingerhost.so)
+$(call add-clean-step, rm -rf $(PRODUCT_OUT)/obj/lib/libinputflingerhost.so $(PRODUCT_OUT)/obj_arm/lib/libinputflingerhost.so)
+$(call add-clean-step, rm -rf $(PRODUCT_OUT)/obj/SHARED_LIBRARIES/libinputflingerhost_intermediates $(PRODUCT_OUT)/obj_arm/SHARED_LIBRARIES/libinputflingerhost_intermediates)
+$(call add-clean-step, rm -rf $(PRODUCT_OUT)/target/common/obj/framework.aidl)
+$(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/JAVA_LIBRARIES/framework_intermediates)
+$(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/APPS/DocumentsUI_intermediates)
+$(call add-clean-step, rm -f $(OUT_DIR)/target/common/obj/JAVA_LIBRARIES/framework_intermediates/src/media/java/android/media/IRemoteControlClient.*)
+$(call add-clean-step, rm -f $(OUT_DIR)/target/common/obj/JAVA_LIBRARIES/framework_intermediates/src/media/java/android/media/IRemoteControlDisplay.*)
+$(call add-clean-step, rm -f $(OUT_DIR)/target/common/obj/APPS/FeatureSplit1_intermediates/src/com/android/test/split/feature/R.java)
+$(call add-clean-step, rm -f $(OUT_DIR)/target/common/obj/APPS/FeatureSplit2_intermediates/src/com/android/test/split/feature/R.java)
+$(call add-clean-step, rm -rf $(OUT_DIR)/target/common/obj/JAVA_LIBRARIES/framework_intermediates/src/core/java/android/hardware)
 
-# ************************************************
-# NEWER CLEAN STEPS MUST BE AT THE END OF THE LIST
-# ************************************************
+# ******************************************************************
+# NEWER CLEAN STEPS MUST BE AT THE END OF THE LIST ABOVE THIS BANNER
+# ******************************************************************

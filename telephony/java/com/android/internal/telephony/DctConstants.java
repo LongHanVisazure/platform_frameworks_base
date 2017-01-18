@@ -44,7 +44,9 @@ public class DctConstants {
         CONNECTED,
         DISCONNECTING,
         FAILED,
-        RETRYING
+        RETRYING        // After moving retry manager to ApnContext, we'll never enter this state!
+                        // Todo: Remove this state and other places that use this state and then
+                        // rename SCANNING to RETRYING.
     }
 
     public enum Activity {
@@ -98,6 +100,12 @@ public class DctConstants {
     public static final int CMD_IS_PROVISIONING_APN = BASE + 38;
     public static final int EVENT_PROVISIONING_APN_ALARM = BASE + 39;
     public static final int CMD_NET_STAT_POLL = BASE + 40;
+    public static final int EVENT_DATA_RAT_CHANGED = BASE + 41;
+    public static final int CMD_CLEAR_PROVISIONING_SPINNER = BASE + 42;
+    public static final int EVENT_DEVICE_PROVISIONED_CHANGE = BASE + 43;
+    public static final int EVENT_REDIRECTION_DETECTED = BASE + 44;
+    public static final int EVENT_PCO_DATA_RECEIVED = BASE + 45;
+    public static final int EVENT_SET_CARRIER_DATA_ENABLED = BASE + 46;
 
     /***** Constants *****/
 
@@ -111,8 +119,10 @@ public class DctConstants {
     public static final int APN_FOTA_ID = 6;
     public static final int APN_CBS_ID = 7;
     public static final int APN_IA_ID = 8;
-    public static final int APN_NUM_TYPES = 9;
+    public static final int APN_EMERGENCY_ID = 9;
+    public static final int APN_NUM_TYPES = 10;
 
+    public static final int INVALID = -1;
     public static final int DISABLED = 0;
     public static final int ENABLED = 1;
 

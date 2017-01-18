@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008 The Android Open Source Project
+ * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,125 +14,116 @@
  * limitations under the License.
  */
 
-#include "jni.h"
-#include "GraphicsJNI.h"
-#include <android_runtime/AndroidRuntime.h>
-
-#include "SkCanvas.h"
-#include "SkPicture.h"
+#include "Picture.h"
 #include "SkStream.h"
-#include "SkTemplates.h"
-#include "CreateJavaOutputStreamAdaptor.h"
+
+#include <memory>
+#include <hwui/Canvas.h>
 
 namespace android {
 
-class SkPictureGlue {
-public:
-    static jlong newPicture(JNIEnv* env, jobject, jlong srcHandle) {
-        const SkPicture* src = reinterpret_cast<SkPicture*>(srcHandle);
-        if (src) {
-            return reinterpret_cast<jlong>(new SkPicture(*src));
-        } else {
-            return reinterpret_cast<jlong>(new SkPicture);
+Picture::Picture(const Picture* src) {
+    if (NULL != src) {
+        mWidth = src->width();
+        mHeight = src->height();
+        if (NULL != src->mPicture.get()) {
+            mPicture.reset(SkRef(src->mPicture.get()));
+        } else if (NULL != src->mRecorder.get()) {
+            mPicture.reset(src->makePartialCopy());
         }
+        validate();
+    } else {
+        mWidth = 0;
+        mHeight = 0;
     }
-
-    static jlong deserialize(JNIEnv* env, jobject, jobject jstream,
-                             jbyteArray jstorage) {
-        SkPicture* picture = NULL;
-        SkStream* strm = CreateJavaInputStreamAdaptor(env, jstream, jstorage);
-        if (strm) {
-            picture = SkPicture::CreateFromStream(strm);
-            delete strm;
-        }
-        return reinterpret_cast<jlong>(picture);
-    }
-
-    static void killPicture(JNIEnv* env, jobject, jlong pictureHandle) {
-        SkPicture* picture = reinterpret_cast<SkPicture*>(pictureHandle);
-        SkASSERT(picture);
-        picture->unref();
-    }
-
-    static void draw(JNIEnv* env, jobject, jlong canvasHandle,
-                            jlong pictureHandle) {
-        SkCanvas* canvas = reinterpret_cast<SkCanvas*>(canvasHandle);
-        SkPicture* picture = reinterpret_cast<SkPicture*>(pictureHandle);
-        SkASSERT(canvas);
-        SkASSERT(picture);
-        picture->draw(canvas);
-    }
-
-    static jboolean serialize(JNIEnv* env, jobject, jlong pictureHandle,
-                          jobject jstream, jbyteArray jstorage) {
-        SkPicture* picture = reinterpret_cast<SkPicture*>(pictureHandle);
-        SkWStream* strm = CreateJavaOutputStreamAdaptor(env, jstream, jstorage);
-        
-        if (NULL != strm) {
-            picture->serialize(strm);
-            delete strm;
-            return JNI_TRUE;
-        }
-        return JNI_FALSE;
-    }
-
-    static jint getWidth(JNIEnv* env, jobject jpic) {
-        NPE_CHECK_RETURN_ZERO(env, jpic);
-        int width = GraphicsJNI::getNativePicture(env, jpic)->width();
-        return static_cast<jint>(width);
-    }
-
-    static jint getHeight(JNIEnv* env, jobject jpic) {
-        NPE_CHECK_RETURN_ZERO(env, jpic);
-        int height = GraphicsJNI::getNativePicture(env, jpic)->height();
-        return static_cast<jint>(height);
-    }
-
-    static jlong beginRecording(JNIEnv* env, jobject, jlong pictHandle,
-                                    jint w, jint h) {
-        SkPicture* pict = reinterpret_cast<SkPicture*>(pictHandle);
-        // beginRecording does not ref its return value, it just returns it.
-        SkCanvas* canvas = pict->beginRecording(w, h);
-        // the java side will wrap this guy in a Canvas.java, which will call
-        // unref in its finalizer, so we have to ref it here, so that both that
-        // Canvas.java and our picture can both be owners
-        canvas->ref();
-        return reinterpret_cast<jlong>(canvas);
-    }
-
-    static void endRecording(JNIEnv* env, jobject, jlong pictHandle) {
-        SkPicture* pict = reinterpret_cast<SkPicture*>(pictHandle);
-        pict->endRecording();
-    }
-};
-
-static JNINativeMethod gPictureMethods[] = {
-    {"getWidth", "()I", (void*) SkPictureGlue::getWidth},
-    {"getHeight", "()I", (void*) SkPictureGlue::getHeight},
-    {"nativeConstructor", "(J)J", (void*) SkPictureGlue::newPicture},
-    {"nativeCreateFromStream", "(Ljava/io/InputStream;[B)J", (void*)SkPictureGlue::deserialize},
-    {"nativeBeginRecording", "(JII)J", (void*) SkPictureGlue::beginRecording},
-    {"nativeEndRecording", "(J)V", (void*) SkPictureGlue::endRecording},
-    {"nativeDraw", "(JJ)V", (void*) SkPictureGlue::draw},
-    {"nativeWriteToStream", "(JLjava/io/OutputStream;[B)Z", (void*)SkPictureGlue::serialize},
-    {"nativeDestructor","(J)V", (void*) SkPictureGlue::killPicture}
-};
-
-#include <android_runtime/AndroidRuntime.h>
-
-#define REG(env, name, array) \
-    result = android::AndroidRuntime::registerNativeMethods(env, name, array, \
-    SK_ARRAY_COUNT(array));  \
-    if (result < 0) return result
-
-int register_android_graphics_Picture(JNIEnv* env) {
-    int result;
-
-    REG(env, "android/graphics/Picture", gPictureMethods);
-
-    return result;
 }
 
+Canvas* Picture::beginRecording(int width, int height) {
+    mPicture.reset(NULL);
+    mRecorder.reset(new SkPictureRecorder);
+    mWidth = width;
+    mHeight = height;
+    SkCanvas* canvas = mRecorder->beginRecording(width, height, NULL, 0);
+    return Canvas::create_canvas(canvas);
 }
 
+void Picture::endRecording() {
+    if (NULL != mRecorder.get()) {
+        mPicture.reset(mRecorder->endRecording());
+        validate();
+        mRecorder.reset(NULL);
+    }
+}
 
+int Picture::width() const {
+    validate();
+    return mWidth;
+}
+
+int Picture::height() const {
+    validate();
+    return mHeight;
+}
+
+Picture* Picture::CreateFromStream(SkStream* stream) {
+    Picture* newPict = new Picture;
+
+    SkPicture* skPicture = SkPicture::CreateFromStream(stream);
+    if (NULL != skPicture) {
+        newPict->mPicture.reset(skPicture);
+
+        const SkIRect cullRect = skPicture->cullRect().roundOut();
+        newPict->mWidth = cullRect.width();
+        newPict->mHeight = cullRect.height();
+    }
+
+    return newPict;
+}
+
+void Picture::serialize(SkWStream* stream) const {
+    if (NULL != mRecorder.get()) {
+        std::unique_ptr<SkPicture> tempPict(this->makePartialCopy());
+        tempPict->serialize(stream);
+    } else if (NULL != mPicture.get()) {
+        validate();
+        mPicture->serialize(stream);
+    } else {
+        SkPictureRecorder recorder;
+        recorder.beginRecording(0, 0);
+        std::unique_ptr<SkPicture> empty(recorder.endRecording());
+        empty->serialize(stream);
+    }
+}
+
+void Picture::draw(Canvas* canvas) {
+    if (NULL != mRecorder.get()) {
+        this->endRecording();
+        SkASSERT(NULL != mPicture.get());
+    }
+    validate();
+    if (NULL != mPicture.get()) {
+        mPicture.get()->playback(canvas->asSkCanvas());
+    }
+}
+
+SkPicture* Picture::makePartialCopy() const {
+    SkASSERT(NULL != mRecorder.get());
+
+    SkPictureRecorder reRecorder;
+
+    SkCanvas* canvas = reRecorder.beginRecording(mWidth, mHeight, NULL, 0);
+    mRecorder->partialReplay(canvas);
+    return reRecorder.endRecording();
+}
+
+void Picture::validate() const {
+#ifdef SK_DEBUG
+    if (NULL != mPicture.get()) {
+        SkRect cullRect = mPicture->cullRect();
+        SkRect myRect = SkRect::MakeWH(SkIntToScalar(mWidth), SkIntToScalar(mHeight));
+        SkASSERT(cullRect == myRect);
+    }
+#endif
+}
+
+}; // namespace android

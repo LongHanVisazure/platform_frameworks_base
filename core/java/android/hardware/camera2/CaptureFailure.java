@@ -15,7 +15,11 @@
  */
 package android.hardware.camera2;
 
-import android.hardware.camera2.CameraDevice.CaptureListener;
+import android.annotation.NonNull;
+import android.annotation.IntDef;
+
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 
 /**
  * A report of failed capture for a single image capture from the image sensor.
@@ -38,23 +42,31 @@ public class CaptureFailure {
     public static final int REASON_ERROR = 0;
 
     /**
-     * The capture has failed due to a {@link CameraDevice#flush} call from the application.
+     * The capture has failed due to a {@link CameraCaptureSession#abortCaptures} call from the
+     * application.
      *
      * @see #getReason()
      */
     public static final int REASON_FLUSHED = 1;
 
+     /** @hide */
+     @Retention(RetentionPolicy.SOURCE)
+     @IntDef(
+         {REASON_ERROR,
+          REASON_FLUSHED })
+     public @interface FailureReason {};
+
     private final CaptureRequest mRequest;
     private final int mReason;
     private final boolean mDropped;
     private final int mSequenceId;
-    private final int mFrameNumber;
+    private final long mFrameNumber;
 
     /**
      * @hide
      */
-    public CaptureFailure(CaptureRequest request, int reason, boolean dropped, int sequenceId,
-            int frameNumber) {
+    public CaptureFailure(CaptureRequest request, int reason,
+            boolean dropped, int sequenceId, long frameNumber) {
         mRequest = request;
         mReason = reason;
         mDropped = dropped;
@@ -66,12 +78,12 @@ public class CaptureFailure {
      * Get the request associated with this failed capture.
      *
      * <p>Whenever a request is unsuccessfully captured, with
-     * {@link CameraDevice.CaptureListener#onCaptureFailed},
+     * {@link CameraCaptureSession.CaptureCallback#onCaptureFailed},
      * the {@code failed capture}'s {@code getRequest()} will return that {@code request}.
      * </p>
      *
      * <p>In particular,
-     * <code><pre>cameraDevice.capture(someRequest, new CaptureListener() {
+     * <code><pre>cameraDevice.capture(someRequest, new CaptureCallback() {
      *     {@literal @}Override
      *     void onCaptureFailed(CaptureRequest myRequest, CaptureFailure myFailure) {
      *         assert(myFailure.getRequest.equals(myRequest) == true);
@@ -82,6 +94,7 @@ public class CaptureFailure {
      *
      * @return The request associated with this failed capture. Never {@code null}.
      */
+    @NonNull
     public CaptureRequest getRequest() {
         return mRequest;
     }
@@ -96,9 +109,9 @@ public class CaptureFailure {
      * for every new result or failure; and the scope is the lifetime of the
      * {@link CameraDevice}.</p>
      *
-     * @return int frame number
+     * @return long frame number
      */
-    public int getFrameNumber() {
+    public long getFrameNumber() {
         return mFrameNumber;
     }
 
@@ -111,6 +124,7 @@ public class CaptureFailure {
      * @see #REASON_ERROR
      * @see #REASON_FLUSHED
      */
+    @FailureReason
     public int getReason() {
         return mReason;
     }
@@ -129,14 +143,14 @@ public class CaptureFailure {
 
     /**
      * The sequence ID for this failed capture that was returned by the
-     * {@link CameraDevice#capture} family of functions.
+     * {@link CameraCaptureSession#capture} family of functions.
      *
      * <p>The sequence ID is a unique monotonically increasing value starting from 0,
      * incremented every time a new group of requests is submitted to the CameraDevice.</p>
      *
      * @return int The ID for the sequence of requests that this capture failure is the result of
      *
-     * @see CameraDevice.CaptureListener#onCaptureSequenceCompleted
+     * @see CameraDevice.CaptureCallback#onCaptureSequenceCompleted
      */
     public int getSequenceId() {
         return mSequenceId;

@@ -25,6 +25,8 @@ import android.view.DragEvent;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 
+import com.android.internal.os.IResultReceiver;
+
 /**
  * API back to a client window that the Window Manager uses to inform it of
  * interesting things happening.
@@ -46,11 +48,12 @@ oneway interface IWindow {
     void executeCommand(String command, String parameters, in ParcelFileDescriptor descriptor);
 
     void resized(in Rect frame, in Rect overscanInsets, in Rect contentInsets,
-            in Rect visibleInsets, boolean reportDraw, in Configuration newConfig);
+            in Rect visibleInsets, in Rect stableInsets, in Rect outsets, boolean reportDraw,
+            in Configuration newConfig, in Rect backDropFrame, boolean forceLayout,
+            boolean alwaysConsumeNavBar);
     void moved(int newX, int newY);
     void dispatchAppVisibility(boolean visible);
     void dispatchGetNewSurface();
-    void dispatchScreenState(boolean on);
 
     /**
      * Tell the window that it is either gaining or losing focus.  Keep it up
@@ -74,15 +77,23 @@ oneway interface IWindow {
     void dispatchDragEvent(in DragEvent event);
 
     /**
+     * Pointer icon events
+     */
+    void updatePointerIcon(float x, float y);
+
+    /**
      * System chrome visibility changes
      */
     void dispatchSystemUiVisibilityChanged(int seq, int globalVisibility,
             int localValue, int localChanges);
 
     /**
-     * If the window manager returned RELAYOUT_RES_ANIMATING
-     * from relayout(), this method will be called when the animation
-     * is done.
+     * Called for non-application windows when the enter animation has completed.
      */
-    void doneAnimating();
+    void dispatchWindowShown();
+
+    /**
+     * Called when Keyboard Shortcuts are requested for the window.
+     */
+    void requestAppKeyboardShortcuts(IResultReceiver receiver, int deviceId);
 }

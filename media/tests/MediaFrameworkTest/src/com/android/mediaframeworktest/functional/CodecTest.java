@@ -42,13 +42,13 @@ import java.io.FileOutputStream;
 import java.util.Random;
 /**
  * Junit / Instrumentation test case for the media player api
- 
- */  
-public class CodecTest {    
+
+ */
+public class CodecTest {
     private static String TAG = "CodecTest";
     private static MediaPlayer mMediaPlayer;
     private MediaPlayer.OnPreparedListener mOnPreparedListener;
-    
+
     private static int WAIT_FOR_COMMAND_TO_COMPLETE = 60000;  //1 min max.
     private static boolean mInitialized = false;
     private static boolean mPrepareReset = false;
@@ -60,24 +60,25 @@ public class CodecTest {
     private static boolean onPrepareSuccess = false;
     public static boolean onCompleteSuccess = false;
     public static boolean mPlaybackError = false;
+    public static boolean mFailedToCompleteWithNoError = true;
     public static int mMediaInfoUnknownCount = 0;
     public static int mMediaInfoVideoTrackLaggingCount = 0;
     public static int mMediaInfoBadInterleavingCount = 0;
     public static int mMediaInfoNotSeekableCount = 0;
     public static int mMediaInfoMetdataUpdateCount = 0;
 
-    public static String printCpuInfo(){      
+    public static String printCpuInfo(){
         String cm = "dumpsys cpuinfo";
         String cpuinfo =null;
         int ch;
         try{
             Process  p = Runtime.getRuntime().exec(cm);
-            InputStream in = p.getInputStream();        
+            InputStream in = p.getInputStream();
             StringBuffer sb = new StringBuffer(512);
-            while ( ( ch = in.read() ) != -1 ){  
-                sb.append((char) ch); 
+            while ( ( ch = in.read() ) != -1 ){
+                sb.append((char) ch);
             }
-            cpuinfo = sb.toString();      
+            cpuinfo = sb.toString();
         }catch (IOException e){
             Log.v(TAG, e.toString());
         }
@@ -90,14 +91,14 @@ public class CodecTest {
         MediaPlayer mp = new MediaPlayer();
         try{
             mp.setDataSource(filePath);
-            mp.prepare(); 
+            mp.prepare();
         }catch (Exception e){
             Log.v(TAG, e.toString());
         }
         int duration = mp.getDuration();
         Log.v(TAG, "Duration " + duration);
         mp.release();
-        Log.v(TAG, "release");      
+        Log.v(TAG, "release");
         return duration;
     }
 
@@ -122,7 +123,7 @@ public class CodecTest {
         }
         currentPosition = mp.getCurrentPosition();
         mp.stop();
-        mp.release();   
+        mp.release();
         Log.v(TAG, "mp currentPositon = " + currentPosition + " play duration = " + (t2-t1));
         //The currentposition should be within 10% of the sleep time
         //For the very short mp3, it should return the length instead of 10 seconds
@@ -130,11 +131,11 @@ public class CodecTest {
             if (currentPosition < 1000 )
                 return true;
         }
-        if ((currentPosition < ((t2-t1) *1.2)) && (currentPosition > 0)) 
+        if ((currentPosition < ((t2-t1) *1.2)) && (currentPosition > 0))
             return true;
         else
             return false;
-    }  
+    }
 
     public static boolean seekTo(String filePath){
         Log.v(TAG, "seekTo " + filePath);
@@ -149,12 +150,12 @@ public class CodecTest {
             currentPosition = mp.getCurrentPosition();
         }catch (Exception e){
             Log.v(TAG, e.getMessage());
-        }      
+        }
         mp.stop();
         mp.release();
         Log.v(TAG, "CurrentPosition = " + currentPosition);
         //The currentposition should be at least greater than the 80% of seek time
-        if ((currentPosition > MediaNames.SEEK_TIME *0.8)) 
+        if ((currentPosition > MediaNames.SEEK_TIME *0.8))
             return true;
         else
             return false;
@@ -170,7 +171,7 @@ public class CodecTest {
         try{
             mp.setDataSource(filePath);
             mp.prepare();
-            duration = mp.getDuration(); 
+            duration = mp.getDuration();
             Log.v(TAG, "setLooping duration " + duration);
             mp.setLooping(true);
             mp.start();
@@ -180,14 +181,14 @@ public class CodecTest {
             Thread.sleep(20000);
             t2=SystemClock.uptimeMillis();
             Log.v(TAG, "pause");
-            //Bug# 1106852 - IllegalStateException will be thrown if pause is called 
+            //Bug# 1106852 - IllegalStateException will be thrown if pause is called
             //in here
             //mp.pause();
             currentPosition = mp.getCurrentPosition();
             Log.v(TAG, "looping position " + currentPosition + "duration = " + (t2-t1));
         }catch (Exception e){
             Log.v(TAG, "Exception : " + e.toString());
-        }      
+        }
         mp.stop();
         mp.release();
         //The current position should be within 20% of the sleep time
@@ -196,7 +197,7 @@ public class CodecTest {
             return true;
         else
             return false;
-    }  
+    }
 
     public static boolean pause(String filePath) throws Exception {
         Log.v(TAG, "pause - " + filePath);
@@ -206,7 +207,7 @@ public class CodecTest {
         long t2=0;
         MediaPlayer mp = new MediaPlayer();
         mp.setDataSource(filePath);
-        mp.prepare();    
+        mp.prepare();
         int duration = mp.getDuration();
         mp.start();
         t1=SystemClock.uptimeMillis();
@@ -244,7 +245,7 @@ public class CodecTest {
         mp.pause();
         mp.release();
     }
-    
+
     static MediaPlayer.OnVideoSizeChangedListener mOnVideoSizeChangedListener =
         new MediaPlayer.OnVideoSizeChangedListener() {
             public void onVideoSizeChanged(MediaPlayer mp, int width, int height) {
@@ -258,7 +259,7 @@ public class CodecTest {
     //Register the videoSizeChanged listener
     public static int videoHeight(String filePath) throws Exception {
         Log.v(TAG, "videoHeight - " + filePath);
-        int videoHeight = 0;    
+        int videoHeight = 0;
         synchronized (lock) {
             initializeMessageLooper();
             try {
@@ -286,7 +287,7 @@ public class CodecTest {
         } catch (Exception e) {
             Log.e(TAG, e.getMessage());
         }
-        
+
         return videoHeight;
     }
 
@@ -321,12 +322,12 @@ public class CodecTest {
             terminateMessageLooper();
         } catch (Exception e) {
             Log.e(TAG, e.getMessage());
-        }        
+        }
         return videoWidth;
     }
 
     //This also test the streaming video which may take a long
-    //time to start the playback. 
+    //time to start the playback.
     public static boolean videoSeekTo(String filePath) throws Exception {
         Log.v(TAG, "videoSeekTo - " + filePath);
         int currentPosition = 0;
@@ -392,12 +393,12 @@ public class CodecTest {
         currentPosition = mp.getCurrentPosition();
         Log.v(TAG, "seekToEnd currentPosition= " + currentPosition + " isPlaying = " + isPlaying);
         mp.stop();
-        mp.release();   
+        mp.release();
         Log.v(TAG, "duration = " + duration);
         if (currentPosition < 0.9 * duration || isPlaying)
             return false;
         else
-            return true;        
+            return true;
     }
 
     public static boolean shortMediaStop(String filePath){
@@ -419,12 +420,12 @@ public class CodecTest {
         currentPosition = mp.getCurrentPosition();
         Log.v(TAG, "seekToEnd currentPosition= " + currentPosition + " isPlaying = " + isPlaying);
         mp.stop();
-        mp.release();   
+        mp.release();
         Log.v(TAG, "duration = " + duration);
         if (currentPosition > duration || isPlaying)
             return false;
         else
-            return true;        
+            return true;
     }
 
     public static boolean playToEnd(String filePath){
@@ -449,13 +450,13 @@ public class CodecTest {
         //updateDuration = mp.getDuration();
         Log.v(TAG, "seekToEnd currentPosition= " + currentPosition + " isPlaying = " + isPlaying);
         mp.stop();
-        mp.release();   
+        mp.release();
         //Log.v(TAG, "duration = " + duration);
         //Log.v(TAG, "Update duration = " + updateDuration);
         if (currentPosition > duration || isPlaying)
             return false;
         else
-            return true;        
+            return true;
     }
 
     public static boolean seektoBeforeStart(String filePath){
@@ -478,7 +479,7 @@ public class CodecTest {
         if (currentPosition < duration/2)
             return false;
         else
-            return true;        
+            return true;
     }
 
     public static boolean mediaRecorderRecord(String filePath){
@@ -499,7 +500,7 @@ public class CodecTest {
             mRecorder.release();
         }catch (Exception e){
             Log.v(TAG, e.toString());
-        }  
+        }
 
         //Verify the recorded file
         MediaPlayer mp = new MediaPlayer();
@@ -540,7 +541,7 @@ public class CodecTest {
             }
             Bitmap outThumbnail = mMediaMetadataRetriever.getFrameAtTime(-1);
 
-            //Verify the thumbnail 
+            //Verify the thumbnail
             Bitmap goldenBitmap = mBitmapFactory.decodeFile(goldenPath);
             outputWidth = outThumbnail.getWidth();
             outputHeight = outThumbnail.getHeight();
@@ -586,8 +587,8 @@ public class CodecTest {
             return false;
     }
 
-    public static boolean prepareAsyncReset(String filePath){    
-        //preparesAsync 
+    public static boolean prepareAsyncReset(String filePath){
+        //preparesAsync
         try{
             MediaPlayer mp = new MediaPlayer();
             mp.setDataSource(filePath);
@@ -602,9 +603,9 @@ public class CodecTest {
     }
 
 
-    public static boolean isLooping(String filePath) {        
+    public static boolean isLooping(String filePath) {
         MediaPlayer mp = null;
-        
+
         try {
             mp = new MediaPlayer();
             if (mp.isLooping()) {
@@ -619,7 +620,7 @@ public class CodecTest {
                 Log.v(TAG, "MediaPlayer.isLooping() returned false after setLooping(true)");
                 return false;
             }
-            
+
             mp.setLooping(false);
             if (mp.isLooping()) {
                 Log.v(TAG, "MediaPlayer.isLooping() returned true after setLooping(false)");
@@ -659,9 +660,9 @@ public class CodecTest {
 
         return true;
     }
-    
+
     /*
-     * Initializes the message looper so that the mediaPlayer object can 
+     * Initializes the message looper so that the mediaPlayer object can
      * receive the callback messages.
      */
     private static void initializeMessageLooper() {
@@ -672,10 +673,10 @@ public class CodecTest {
                 // Set up a looper to be used by camera.
                 Looper.prepare();
                 Log.v(TAG, "start loopRun");
-                // Save the looper so that we can terminate this thread 
+                // Save the looper so that we can terminate this thread
                 // after we are done with it.
-                mLooper = Looper.myLooper();                
-                mMediaPlayer = new MediaPlayer();                                
+                mLooper = Looper.myLooper();
+                mMediaPlayer = new MediaPlayer();
                 synchronized (lock) {
                     mInitialized = true;
                     lock.notify();
@@ -685,7 +686,7 @@ public class CodecTest {
             }
         }.start();
     }
-    
+
     /*
      * Terminates the message looper thread.
      */
@@ -693,7 +694,7 @@ public class CodecTest {
         mLooper.quit();
         mMediaPlayer.release();
     }
-    
+
     static MediaPlayer.OnPreparedListener mPreparedListener = new MediaPlayer.OnPreparedListener() {
         public void onPrepared(MediaPlayer mp) {
             synchronized (prepareDone) {
@@ -707,14 +708,14 @@ public class CodecTest {
             }
         }
     };
-   
+
     public static boolean prepareAsyncCallback(String filePath, boolean reset) throws Exception {
         //Added the PrepareReset flag which allow us to switch to different
         //test case.
         if (reset){
             mPrepareReset = true;
         }
-        
+
         synchronized (lock) {
             initializeMessageLooper();
             try {
@@ -728,18 +729,18 @@ public class CodecTest {
             mMediaPlayer.setOnPreparedListener(mPreparedListener);
             mMediaPlayer.setDataSource(filePath);
             mMediaPlayer.setDisplay(MediaFrameworkTest.mSurfaceView.getHolder());
-            mMediaPlayer.prepareAsync(); 
+            mMediaPlayer.prepareAsync();
             synchronized (prepareDone) {
                 try {
                     prepareDone.wait(WAIT_FOR_COMMAND_TO_COMPLETE);
                 } catch (Exception e) {
                     Log.v(TAG, "wait was interrupted.");
                 }
-            }         
+            }
             terminateMessageLooper();
         }catch (Exception e){
             Log.v(TAG,e.getMessage());
-        }      
+        }
        return onPrepareSuccess;
     }
 
@@ -784,8 +785,12 @@ public class CodecTest {
         }
     };
 
-    // For each media file, forward twice and backward once, then play to the end
     public static boolean playMediaSamples(String filePath) throws Exception {
+        return playMediaSamples(filePath, 2000);
+    }
+
+    // For each media file, forward twice and backward once, then play to the end
+    public static boolean playMediaSamples(String filePath, int buffertime) throws Exception {
         int duration = 0;
         int curPosition = 0;
         int nextPosition = 0;
@@ -797,6 +802,7 @@ public class CodecTest {
         mMediaInfoNotSeekableCount = 0;
         mMediaInfoMetdataUpdateCount = 0;
         mPlaybackError = false;
+        mFailedToCompleteWithNoError = true;
         String testResult;
 
         initializeMessageLooper();
@@ -819,19 +825,29 @@ public class CodecTest {
             duration = mMediaPlayer.getDuration();
             // start to play
             mMediaPlayer.start();
-            waittime = duration - mMediaPlayer.getCurrentPosition();
-            synchronized(onCompletion){
-                try {
-                    onCompletion.wait(waittime + 2000);
-                }catch (Exception e) {
-                    Log.v(TAG, "playMediaSamples are interrupted");
-                    return false;
+            if (duration < 0) {
+                Log.w(TAG, filePath + " has unknown duration, waiting until playback completes");
+                while (mMediaPlayer.isPlaying()) {
+                    SystemClock.sleep(1000);
+                }
+            } else {
+                waittime = duration - mMediaPlayer.getCurrentPosition();
+                synchronized(onCompletion){
+                    try {
+                        onCompletion.wait(waittime + buffertime);
+                    } catch (Exception e) {
+                        Log.v(TAG, "playMediaSamples are interrupted");
+                        return false;
+                    }
                 }
             }
             terminateMessageLooper();
-        }catch (Exception e) {
+        } catch (Exception e) {
             Log.v(TAG, "playMediaSamples:" + e.getMessage());
         }
+        // Check if playback state is unknown (neither completed nor erroneous) unless
+        // it's not interrupted in the middle. If true, that is an exceptional case to investigate.
+        mFailedToCompleteWithNoError = !(onCompleteSuccess || mPlaybackError);
         return onCompleteSuccess;
     }
 }

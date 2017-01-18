@@ -20,8 +20,8 @@
 
 #include "jni/jni_gl_environment.h"
 #include "jni/jni_util.h"
-#include <media/mediarecorder.h>
 #include "native/core/gl_env.h"
+#include <media/mediarecorder.h>
 
 #include <gui/IGraphicBufferProducer.h>
 #include <gui/Surface.h>
@@ -39,7 +39,7 @@ using android::Surface;
 
 class NativeWindowHandle : public WindowHandle {
   public:
-    NativeWindowHandle(ANativeWindow* window) : window_(window) {
+    explicit NativeWindowHandle(ANativeWindow* window) : window_(window) {
     }
 
     virtual ~NativeWindowHandle() {
@@ -63,7 +63,8 @@ class NativeWindowHandle : public WindowHandle {
 };
 
 jboolean Java_android_filterfw_core_GLEnvironment_nativeAllocate(JNIEnv* env, jobject thiz) {
-  return ToJBool(WrapObjectInJava(new GLEnv(), env, thiz, true));
+  std::unique_ptr<GLEnv> glEnv(new GLEnv());
+  return ToJBool(WrapOwnedObjectInJava(std::move(glEnv), env, thiz, true));
 }
 
 jboolean Java_android_filterfw_core_GLEnvironment_nativeDeallocate(JNIEnv* env, jobject thiz) {
@@ -92,8 +93,8 @@ jboolean Java_android_filterfw_core_GLEnvironment_nativeIsContextActive(JNIEnv* 
   return gl_env ? ToJBool(gl_env->IsContextActive()) : JNI_FALSE;
 }
 
-jboolean Java_android_filterfw_core_GLEnvironment_nativeIsAnyContextActive(JNIEnv* env,
-                                                                           jclass clazz) {
+jboolean Java_android_filterfw_core_GLEnvironment_nativeIsAnyContextActive(JNIEnv* /* env */,
+                                                                           jclass /* clazz */) {
   return ToJBool(GLEnv::IsAnyContextActive());
 }
 

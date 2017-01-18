@@ -17,11 +17,13 @@
 package android.view;
 
 import android.content.res.CompatibilityInfo;
-import android.os.IBinder;
+import android.content.res.Configuration;
 import android.os.Parcel;
 import android.os.Parcelable;
-import android.os.Process;
+import android.util.ArraySet;
 import android.util.DisplayMetrics;
+
+import java.util.Arrays;
 
 import libcore.util.Objects;
 
@@ -55,6 +57,11 @@ public final class DisplayInfo implements Parcelable {
      * The human-readable name of the display.
      */
     public String name;
+
+    /**
+     * Unique identifier for the display. Shouldn't be displayed to the user.
+     */
+    public String uniqueId;
 
     /**
      * The width of the portion of the display that is available to applications, in pixels.
@@ -144,16 +151,32 @@ public final class DisplayInfo implements Parcelable {
      * more than one physical display.
      * </p>
      */
+    @Surface.Rotation
     public int rotation;
 
     /**
-     * The refresh rate of this display in frames per second.
-     * <p>
-     * The value of this field is indeterminate if the logical display is presented on
-     * more than one physical display.
-     * </p>
+     * The active display mode.
      */
-    public float refreshRate;
+    public int modeId;
+
+    /**
+     * The default display mode.
+     */
+    public int defaultModeId;
+
+    /**
+     * The supported modes of this display.
+     */
+    public Display.Mode[] supportedModes = Display.Mode.EMPTY_ARRAY;
+
+    /** The active color mode. */
+    public int colorMode;
+
+    /** The list of supported color modes */
+    public int[] supportedColorModes = { Display.COLOR_MODE_DEFAULT };
+
+    /** The display's HDR capabilities */
+    public Display.HdrCapabilities hdrCapabilities;
 
     /**
      * The logical display density which is the basis for density-independent
@@ -178,6 +201,25 @@ public final class DisplayInfo implements Parcelable {
      * </p>
      */
     public float physicalYDpi;
+
+    /**
+     * This is a positive value indicating the phase offset of the VSYNC events provided by
+     * Choreographer relative to the display refresh.  For example, if Choreographer reports
+     * that the refresh occurred at time N, it actually occurred at (N - appVsyncOffsetNanos).
+     */
+    public long appVsyncOffsetNanos;
+
+    /**
+     * This is how far in advance a buffer must be queued for presentation at
+     * a given time.  If you want a buffer to appear on the screen at
+     * time N, you must submit the buffer before (N - bufferDeadlineNanos).
+     */
+    public long presentationDeadlineNanos;
+
+    /**
+     * The state of the display, such as {@link android.view.Display#STATE_ON}.
+     */
+    public int state;
 
     /**
      * The UID of the application that owns this display, or zero if it is owned by the system.
@@ -230,7 +272,7 @@ public final class DisplayInfo implements Parcelable {
                 && flags == other.flags
                 && type == other.type
                 && Objects.equal(address, other.address)
-                && Objects.equal(name, other.name)
+                && Objects.equal(uniqueId, other.uniqueId)
                 && appWidth == other.appWidth
                 && appHeight == other.appHeight
                 && smallestNominalAppWidth == other.smallestNominalAppWidth
@@ -244,10 +286,17 @@ public final class DisplayInfo implements Parcelable {
                 && overscanRight == other.overscanRight
                 && overscanBottom == other.overscanBottom
                 && rotation == other.rotation
-                && refreshRate == other.refreshRate
+                && modeId == other.modeId
+                && defaultModeId == other.defaultModeId
+                && colorMode == other.colorMode
+                && Arrays.equals(supportedColorModes, other.supportedColorModes)
+                && Objects.equal(hdrCapabilities, other.hdrCapabilities)
                 && logicalDensityDpi == other.logicalDensityDpi
                 && physicalXDpi == other.physicalXDpi
                 && physicalYDpi == other.physicalYDpi
+                && appVsyncOffsetNanos == other.appVsyncOffsetNanos
+                && presentationDeadlineNanos == other.presentationDeadlineNanos
+                && state == other.state
                 && ownerUid == other.ownerUid
                 && Objects.equal(ownerPackageName, other.ownerPackageName);
     }
@@ -263,6 +312,7 @@ public final class DisplayInfo implements Parcelable {
         type = other.type;
         address = other.address;
         name = other.name;
+        uniqueId = other.uniqueId;
         appWidth = other.appWidth;
         appHeight = other.appHeight;
         smallestNominalAppWidth = other.smallestNominalAppWidth;
@@ -276,10 +326,19 @@ public final class DisplayInfo implements Parcelable {
         overscanRight = other.overscanRight;
         overscanBottom = other.overscanBottom;
         rotation = other.rotation;
-        refreshRate = other.refreshRate;
+        modeId = other.modeId;
+        defaultModeId = other.defaultModeId;
+        supportedModes = Arrays.copyOf(other.supportedModes, other.supportedModes.length);
+        colorMode = other.colorMode;
+        supportedColorModes = Arrays.copyOf(
+                other.supportedColorModes, other.supportedColorModes.length);
+        hdrCapabilities = other.hdrCapabilities;
         logicalDensityDpi = other.logicalDensityDpi;
         physicalXDpi = other.physicalXDpi;
         physicalYDpi = other.physicalYDpi;
+        appVsyncOffsetNanos = other.appVsyncOffsetNanos;
+        presentationDeadlineNanos = other.presentationDeadlineNanos;
+        state = other.state;
         ownerUid = other.ownerUid;
         ownerPackageName = other.ownerPackageName;
     }
@@ -303,12 +362,29 @@ public final class DisplayInfo implements Parcelable {
         overscanRight = source.readInt();
         overscanBottom = source.readInt();
         rotation = source.readInt();
-        refreshRate = source.readFloat();
+        modeId = source.readInt();
+        defaultModeId = source.readInt();
+        int nModes = source.readInt();
+        supportedModes = new Display.Mode[nModes];
+        for (int i = 0; i < nModes; i++) {
+            supportedModes[i] = Display.Mode.CREATOR.createFromParcel(source);
+        }
+        colorMode = source.readInt();
+        int nColorModes = source.readInt();
+        supportedColorModes = new int[nColorModes];
+        for (int i = 0; i < nColorModes; i++) {
+            supportedColorModes[i] = source.readInt();
+        }
+        hdrCapabilities = source.readParcelable(null);
         logicalDensityDpi = source.readInt();
         physicalXDpi = source.readFloat();
         physicalYDpi = source.readFloat();
+        appVsyncOffsetNanos = source.readLong();
+        presentationDeadlineNanos = source.readLong();
+        state = source.readInt();
         ownerUid = source.readInt();
         ownerPackageName = source.readString();
+        uniqueId = source.readString();
     }
 
     @Override
@@ -331,17 +407,87 @@ public final class DisplayInfo implements Parcelable {
         dest.writeInt(overscanRight);
         dest.writeInt(overscanBottom);
         dest.writeInt(rotation);
-        dest.writeFloat(refreshRate);
+        dest.writeInt(modeId);
+        dest.writeInt(defaultModeId);
+        dest.writeInt(supportedModes.length);
+        for (int i = 0; i < supportedModes.length; i++) {
+            supportedModes[i].writeToParcel(dest, flags);
+        }
+        dest.writeInt(colorMode);
+        dest.writeInt(supportedColorModes.length);
+        for (int i = 0; i < supportedColorModes.length; i++) {
+            dest.writeInt(supportedColorModes[i]);
+        }
+        dest.writeParcelable(hdrCapabilities, flags);
         dest.writeInt(logicalDensityDpi);
         dest.writeFloat(physicalXDpi);
         dest.writeFloat(physicalYDpi);
+        dest.writeLong(appVsyncOffsetNanos);
+        dest.writeLong(presentationDeadlineNanos);
+        dest.writeInt(state);
         dest.writeInt(ownerUid);
         dest.writeString(ownerPackageName);
+        dest.writeString(uniqueId);
     }
 
     @Override
     public int describeContents() {
         return 0;
+    }
+
+    public Display.Mode getMode() {
+        return findMode(modeId);
+    }
+
+    public Display.Mode getDefaultMode() {
+        return findMode(defaultModeId);
+    }
+
+    private Display.Mode findMode(int id) {
+        for (int i = 0; i < supportedModes.length; i++) {
+            if (supportedModes[i].getModeId() == id) {
+                return supportedModes[i];
+            }
+        }
+        throw new IllegalStateException("Unable to locate mode " + id);
+    }
+
+    /**
+     * Returns the id of the "default" mode with the given refresh rate, or {@code 0} if no suitable
+     * mode could be found.
+     */
+    public int findDefaultModeByRefreshRate(float refreshRate) {
+        Display.Mode[] modes = supportedModes;
+        Display.Mode defaultMode = getDefaultMode();
+        for (int i = 0; i < modes.length; i++) {
+            if (modes[i].matches(
+                    defaultMode.getPhysicalWidth(), defaultMode.getPhysicalHeight(), refreshRate)) {
+                return modes[i].getModeId();
+            }
+        }
+        return 0;
+    }
+
+    /**
+     * Returns the list of supported refresh rates in the default mode.
+     */
+    public float[] getDefaultRefreshRates() {
+        Display.Mode[] modes = supportedModes;
+        ArraySet<Float> rates = new ArraySet<>();
+        Display.Mode defaultMode = getDefaultMode();
+        for (int i = 0; i < modes.length; i++) {
+            Display.Mode mode = modes[i];
+            if (mode.getPhysicalWidth() == defaultMode.getPhysicalWidth()
+                    && mode.getPhysicalHeight() == defaultMode.getPhysicalHeight()) {
+                rates.add(mode.getRefreshRate());
+            }
+        }
+        float[] result = new float[rates.size()];
+        int i = 0;
+        for (Float rate : rates) {
+            result[i++] = rate;
+        }
+        return result;
     }
 
     public void getAppMetrics(DisplayMetrics outMetrics) {
@@ -350,16 +496,17 @@ public final class DisplayInfo implements Parcelable {
 
     public void getAppMetrics(DisplayMetrics outMetrics, DisplayAdjustments displayAdjustments) {
         getMetricsWithSize(outMetrics, displayAdjustments.getCompatibilityInfo(),
-                displayAdjustments.getActivityToken(), appWidth, appHeight);
+                displayAdjustments.getConfiguration(), appWidth, appHeight);
     }
 
-    public void getAppMetrics(DisplayMetrics outMetrics, CompatibilityInfo ci, IBinder token) {
-        getMetricsWithSize(outMetrics, ci, token, appWidth, appHeight);
+    public void getAppMetrics(DisplayMetrics outMetrics, CompatibilityInfo ci,
+            Configuration configuration) {
+        getMetricsWithSize(outMetrics, ci, configuration, appWidth, appHeight);
     }
 
     public void getLogicalMetrics(DisplayMetrics outMetrics, CompatibilityInfo compatInfo,
-            IBinder token) {
-        getMetricsWithSize(outMetrics, compatInfo, token, logicalWidth, logicalHeight);
+            Configuration configuration) {
+        getMetricsWithSize(outMetrics, compatInfo, configuration, logicalWidth, logicalHeight);
     }
 
     public int getNaturalWidth() {
@@ -380,16 +527,23 @@ public final class DisplayInfo implements Parcelable {
     }
 
     private void getMetricsWithSize(DisplayMetrics outMetrics, CompatibilityInfo compatInfo,
-            IBinder token, int width, int height) {
+            Configuration configuration, int width, int height) {
         outMetrics.densityDpi = outMetrics.noncompatDensityDpi = logicalDensityDpi;
-        outMetrics.noncompatWidthPixels  = outMetrics.widthPixels = width;
-        outMetrics.noncompatHeightPixels = outMetrics.heightPixels = height;
-
         outMetrics.density = outMetrics.noncompatDensity =
                 logicalDensityDpi * DisplayMetrics.DENSITY_DEFAULT_SCALE;
         outMetrics.scaledDensity = outMetrics.noncompatScaledDensity = outMetrics.density;
         outMetrics.xdpi = outMetrics.noncompatXdpi = physicalXDpi;
         outMetrics.ydpi = outMetrics.noncompatYdpi = physicalYDpi;
+
+        width = (configuration != null
+                && configuration.screenWidthDp != Configuration.SCREEN_WIDTH_DP_UNDEFINED)
+                ? (int)((configuration.screenWidthDp * outMetrics.density) + 0.5f) : width;
+        height = (configuration != null
+                && configuration.screenHeightDp != Configuration.SCREEN_HEIGHT_DP_UNDEFINED)
+                ? (int)((configuration.screenHeightDp * outMetrics.density) + 0.5f) : height;
+
+        outMetrics.noncompatWidthPixels  = outMetrics.widthPixels = width;
+        outMetrics.noncompatHeightPixels = outMetrics.heightPixels = height;
 
         if (!compatInfo.equals(CompatibilityInfo.DEFAULT_COMPATIBILITY_INFO)) {
             compatInfo.applyToDisplayMetrics(outMetrics);
@@ -402,6 +556,8 @@ public final class DisplayInfo implements Parcelable {
         StringBuilder sb = new StringBuilder();
         sb.append("DisplayInfo{\"");
         sb.append(name);
+        sb.append("\", uniqueId \"");
+        sb.append(uniqueId);
         sb.append("\", app ");
         sb.append(appWidth);
         sb.append(" x ");
@@ -429,9 +585,19 @@ public final class DisplayInfo implements Parcelable {
         sb.append(smallestNominalAppWidth);
         sb.append(" x ");
         sb.append(smallestNominalAppHeight);
-        sb.append(", ");
-        sb.append(refreshRate);
-        sb.append(" fps, rotation");
+        sb.append(", mode ");
+        sb.append(modeId);
+        sb.append(", defaultMode ");
+        sb.append(defaultModeId);
+        sb.append(", modes ");
+        sb.append(Arrays.toString(supportedModes));
+        sb.append(", colorMode ");
+        sb.append(colorMode);
+        sb.append(", supportedColorModes ");
+        sb.append(Arrays.toString(supportedColorModes));
+        sb.append(", hdrCapabilities ");
+        sb.append(hdrCapabilities);
+        sb.append(", rotation ");
         sb.append(rotation);
         sb.append(", density ");
         sb.append(logicalDensityDpi);
@@ -441,11 +607,17 @@ public final class DisplayInfo implements Parcelable {
         sb.append(physicalYDpi);
         sb.append(") dpi, layerStack ");
         sb.append(layerStack);
+        sb.append(", appVsyncOff ");
+        sb.append(appVsyncOffsetNanos);
+        sb.append(", presDeadline ");
+        sb.append(presentationDeadlineNanos);
         sb.append(", type ");
         sb.append(Display.typeToString(type));
         if (address != null) {
             sb.append(", address ").append(address);
         }
+        sb.append(", state ");
+        sb.append(Display.stateToString(state));
         if (ownerUid != 0 || ownerPackageName != null) {
             sb.append(", owner ").append(ownerPackageName);
             sb.append(" (uid ").append(ownerUid).append(")");
@@ -468,6 +640,12 @@ public final class DisplayInfo implements Parcelable {
         }
         if ((flags & Display.FLAG_PRESENTATION) != 0) {
             result.append(", FLAG_PRESENTATION");
+        }
+        if ((flags & Display.FLAG_SCALING_DISABLED) != 0) {
+            result.append(", FLAG_SCALING_DISABLED");
+        }
+        if ((flags & Display.FLAG_ROUND) != 0) {
+            result.append(", FLAG_ROUND");
         }
         return result.toString();
     }

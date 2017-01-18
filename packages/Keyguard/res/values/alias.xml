@@ -22,18 +22,6 @@
     <!-- Alias used to reference framework color for transparency. -->
     <item type="color" name="transparent">@android:color/transparent</item>
 
-    <!-- Alias used to reference framework drawable in keyguard. -->
-    <item type="drawable" name="stat_sys_warning">@android:drawable/stat_sys_warning</item>
-
-    <!-- Alias used to reference framework drawable in keyguard. -->
-    <item type="drawable" name="ic_media_pause">@android:drawable/ic_media_pause</item>
-
-    <!-- Alias used to reference framework drawable in keyguard. -->
-    <item type="drawable" name="ic_media_stop">@*android:drawable/ic_media_stop</item>
-
-    <!-- Alias used to reference framework drawable in keyguard. -->
-    <item type="drawable" name="ic_contact_picture">@*android:drawable/ic_contact_picture</item>
-
     <!-- Alias used to reference framework "OK" string in keyguard.  -->
     <item type="string" name="ok">@*android:string/ok</item>
 
@@ -49,4 +37,6 @@
     <!-- Alias used to reference framework activity duration.  -->
     <item type="integer" name="config_activityDefaultDur">@*android:integer/config_activityDefaultDur</item>
 
+    <!-- Alias used to reference one of two possible layouts in keyguard.  -->
+    <item type="layout" name="keyguard_eca">@layout/keyguard_emergency_carrier_area</item>
 </resources>

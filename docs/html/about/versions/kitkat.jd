@@ -13,13 +13,13 @@ function revealSection(hashy) {
     link = $("#title-tabs a[href$="+sectionId+"]");
     link.parent().addClass("selected");
     link.parent().siblings().removeClass("selected");
-    
+
     sectionDiv = $(".version-section"+link.attr("href"));
     if (sectionDiv.length) {
       $(".version-section").hide();
       sectionDiv.show();
     }
-    
+
     $('html, body').animate({
          scrollTop: $(hashy).offset().top
      }, 100);
@@ -54,15 +54,14 @@ window.onhashchange = function () {
 <!-- BEGIN ANDROID 4.4 -->
 <div id="44-android-44" class="version-section">
 
-  <div style="padding:0px 0px 0px 60px;margin-top:-3px;float:right;">
-    <img src="{@docRoot}design/media/index_landing_page.png" alt="Android 4.4 on phone and tablet" width="380">
+  <div style="padding:0px 0px 0px 60px;margin-top:-20px;float:right;">
+    <img src="{@docRoot}images/kk-devices.png" alt="Android 4.4 on phone and tablet" width="380">
   </div>
 
-  <div class="landing-docs" style="float:right;clear:both;margin:22px 0 2em 3em;">
-  <div class="col-4 normal-links highlights" style="font-size:12px;">
-    <h3 id="thisd" >Key Developer Features</h3>
+<div id="qv-wrapper">
+  <div id="qv">
+    <h2 id="features" >Key Developer Features</h3>
     <ul style="list-style-type:none;">
-      <!--<li><a href="#44-ui">UI refresh</a></li>-->
       <li><a href="#44-hce">Host Card Emulation</a></li>
       <li><a href="#44-printing">Printing framework</a></li>
       <li><a href="#44-storage-access">Storage access framework</a></li>
@@ -148,7 +147,7 @@ window.onhashchange = function () {
 </p>
 
 <p>
-  New tools give also give you powerful insight into your app's memory use. The
+  New tools also give you powerful insight into your app's memory use. The
   <strong>procstats tool</strong> details memory use over time, with run times
   and memory footprint for foreground apps and background services. An
   on-device view is also available as a new developer option. The

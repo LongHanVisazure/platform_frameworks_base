@@ -16,15 +16,22 @@
 
 package com.android.internal.os;
 
+import static android.system.OsConstants.F_SETFD;
+import static android.system.OsConstants.O_CLOEXEC;
+import static android.system.OsConstants.STDERR_FILENO;
+import static android.system.OsConstants.STDIN_FILENO;
+import static android.system.OsConstants.STDOUT_FILENO;
+
 import android.net.Credentials;
 import android.net.LocalSocket;
 import android.os.Process;
 import android.os.SELinux;
 import android.os.SystemProperties;
+import android.os.Trace;
 import android.system.ErrnoException;
 import android.system.Os;
 import android.util.Log;
-import dalvik.system.PathClassLoader;
+import dalvik.system.VMRuntime;
 import java.io.BufferedReader;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
@@ -36,6 +43,7 @@ import java.io.InputStreamReader;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import libcore.io.IoUtils;
 
 /**
@@ -70,7 +78,6 @@ class ZygoteConnection {
     private final DataOutputStream mSocketOutStream;
     private final BufferedReader mSocketReader;
     private final Credentials peer;
-    private final String peerSecurityContext;
     private final String abiList;
 
     /**
@@ -91,15 +98,13 @@ class ZygoteConnection {
                 new InputStreamReader(socket.getInputStream()), 256);
 
         mSocket.setSoTimeout(CONNECTION_TIMEOUT_MILLIS);
-                
+
         try {
             peer = mSocket.getPeerCredentials();
         } catch (IOException ex) {
             Log.e(TAG, "Cannot read peer credentials", ex);
             throw ex;
         }
-
-        peerSecurityContext = SELinux.getPeerContext(mSocket.getFileDescriptor());
     }
 
     /**
@@ -113,7 +118,7 @@ class ZygoteConnection {
 
     /**
      * Reads one start command from the command socket. If successful,
-     * a child is forked and a {@link ZygoteInit.MethodAndArgsCaller}
+     * a child is forked and a {@link Zygote.MethodAndArgsCaller}
      * exception is thrown in that child while in the parent process,
      * the method returns normally. On failure, the child is not
      * spawned and messages are printed to the log and stderr. Returns
@@ -122,10 +127,10 @@ class ZygoteConnection {
      *
      * @return false if command socket should continue to be read from, or
      * true if an end-of-file has been encountered.
-     * @throws ZygoteInit.MethodAndArgsCaller trampoline to invoke main()
+     * @throws Zygote.MethodAndArgsCaller trampoline to invoke main()
      * method in child process
      */
-    boolean runOnce() throws ZygoteInit.MethodAndArgsCaller {
+    boolean runOnce(ZygoteServer zygoteServer) throws Zygote.MethodAndArgsCaller {
 
         String args[];
         Arguments parsedArgs = null;
@@ -165,16 +170,19 @@ class ZygoteConnection {
                 return handleAbiListQuery();
             }
 
+            if (parsedArgs.preloadPackage != null) {
+                return handlePreloadPackage(parsedArgs.preloadPackage,
+                        parsedArgs.preloadPackageLibs);
+            }
+
             if (parsedArgs.permittedCapabilities != 0 || parsedArgs.effectiveCapabilities != 0) {
                 throw new ZygoteSecurityException("Client may not specify capabilities: " +
                         "permitted=0x" + Long.toHexString(parsedArgs.permittedCapabilities) +
                         ", effective=0x" + Long.toHexString(parsedArgs.effectiveCapabilities));
             }
 
-            applyUidSecurityPolicy(parsedArgs, peer, peerSecurityContext);
-            applyRlimitSecurityPolicy(parsedArgs, peer, peerSecurityContext);
-            applyInvokeWithSecurityPolicy(parsedArgs, peer, peerSecurityContext);
-            applyseInfoSecurityPolicy(parsedArgs, peer, peerSecurityContext);
+            applyUidSecurityPolicy(parsedArgs, peer);
+            applyInvokeWithSecurityPolicy(parsedArgs, peer);
 
             applyDebuggerSystemProperty(parsedArgs);
             applyInvokeWithSystemProperty(parsedArgs);
@@ -185,11 +193,14 @@ class ZygoteConnection {
                 rlimits = parsedArgs.rlimits.toArray(intArray2d);
             }
 
-            if (parsedArgs.runtimeInit && parsedArgs.invokeWith != null) {
-                FileDescriptor[] pipeFds = Os.pipe();
+            int[] fdsToIgnore = null;
+
+            if (parsedArgs.invokeWith != null) {
+                FileDescriptor[] pipeFds = Os.pipe2(O_CLOEXEC);
                 childPipeFd = pipeFds[1];
                 serverPipeFd = pipeFds[0];
-                ZygoteInit.setCloseOnExec(serverPipeFd, true);
+                Os.fcntlInt(childPipeFd, F_SETFD, 0);
+                fdsToIgnore = new int[] { childPipeFd.getInt$(), serverPipeFd.getInt$() };
             }
 
             /**
@@ -212,7 +223,7 @@ class ZygoteConnection {
                 fdsToClose[0] = fd.getInt$();
             }
 
-            fd = ZygoteInit.getServerSocketFileDescriptor();
+            fd = zygoteServer.getServerSocketFileDescriptor();
 
             if (fd != null) {
                 fdsToClose[1] = fd.getInt$();
@@ -222,9 +233,8 @@ class ZygoteConnection {
 
             pid = Zygote.forkAndSpecialize(parsedArgs.uid, parsedArgs.gid, parsedArgs.gids,
                     parsedArgs.debugFlags, rlimits, parsedArgs.mountExternal, parsedArgs.seInfo,
-                    parsedArgs.niceName, fdsToClose);
-        } catch (IOException ex) {
-            logAndPrintError(newStderr, "Exception creating pipe", ex);
+                    parsedArgs.niceName, fdsToClose, fdsToIgnore, parsedArgs.instructionSet,
+                    parsedArgs.appDataDir);
         } catch (ErrnoException ex) {
             logAndPrintError(newStderr, "Exception creating pipe", ex);
         } catch (IllegalArgumentException ex) {
@@ -237,12 +247,13 @@ class ZygoteConnection {
         try {
             if (pid == 0) {
                 // in child
+                zygoteServer.closeServerSocket();
                 IoUtils.closeQuietly(serverPipeFd);
                 serverPipeFd = null;
                 handleChildProc(parsedArgs, descriptors, childPipeFd, newStderr);
 
                 // should never get here, the child is expected to either
-                // throw ZygoteInit.MethodAndArgsCaller or exec().
+                // throw Zygote.MethodAndArgsCaller or exec().
                 return true;
             } else {
                 // in parent...pid of < 0 means failure
@@ -266,6 +277,10 @@ class ZygoteConnection {
             Log.e(TAG, "Error writing to command socket", ioe);
             return true;
         }
+    }
+
+    protected boolean handlePreloadPackage(String packagePath, String libsPath) {
+        throw new RuntimeException("Zyogte does not support package preloading");
     }
 
     /**
@@ -298,19 +313,13 @@ class ZygoteConnection {
      *   <li> --rlimit=r,c,m<i>tuple of values for setrlimit() call.
      *    <code>r</code> is the resource, <code>c</code> and <code>m</code>
      *    are the settings for current and max value.</i>
-     *   <li> --classpath=<i>colon-separated classpath</i> indicates
-     * that the specified class (which must b first non-flag argument) should
-     * be loaded from jar files in the specified classpath. Incompatible with
-     * --runtime-init
-     *   <li> --runtime-init indicates that the remaining arg list should
-     * be handed off to com.android.internal.os.RuntimeInit, rather than
-     * processed directly
-     * Android runtime startup (eg, Binder initialization) is also eschewed.
+     *   <li> --instruction-set=<i>instruction-set-string</i> which instruction set to use/emulate.
      *   <li> --nice-name=<i>nice name to appear in ps</i>
-     *   <li> If <code>--runtime-init</code> is present:
-     *      [--] &lt;args for RuntimeInit &gt;
-     *   <li> If <code>--runtime-init</code> is absent:
-     *      [--] &lt;classname&gt; [args...]
+     *   <li> --runtime-args indicates that the remaining arg list should
+     * be handed off to com.android.internal.os.RuntimeInit, rather than
+     * processed directly.
+     * Android runtime startup (eg, Binder initialization) is also eschewed.
+     *   <li> [--] &lt;args for RuntimeInit &gt;
      * </ul>
      */
     static class Arguments {
@@ -327,7 +336,7 @@ class ZygoteConnection {
 
         /**
          * From --enable-debugger, --enable-checkjni, --enable-assert,
-         * --enable-safemode, and --enable-jni-logging.
+         * --enable-safemode, --generate-debug-info and --enable-jni-logging.
          */
         int debugFlags;
 
@@ -337,12 +346,6 @@ class ZygoteConnection {
         /** from --target-sdk-version. */
         int targetSdkVersion;
         boolean targetSdkVersionSpecified;
-
-        /** from --classpath */
-        String classpath;
-
-        /** from --runtime-init */
-        boolean runtimeInit;
 
         /** from --nice-name */
         String niceName;
@@ -374,6 +377,23 @@ class ZygoteConnection {
         boolean abiListQuery;
 
         /**
+         * The instruction set to use, or null when not important.
+         */
+        String instructionSet;
+
+        /**
+         * The app data directory. May be null, e.g., for the system server. Note that this might
+         * not be reliable in the case of process-sharing apps.
+         */
+        String appDataDir;
+
+        /**
+         * Whether to preload a package, with the package path in the remainingArgs.
+         */
+        String preloadPackage;
+        String preloadPackageLibs;
+
+        /**
          * Constructs instance and parses args
          * @param args zygote command-line args
          * @throws IllegalArgumentException
@@ -393,6 +413,8 @@ class ZygoteConnection {
         private void parseArgs(String args[])
                 throws IllegalArgumentException {
             int curArg = 0;
+
+            boolean seenRuntimeArgs = false;
 
             for ( /* curArg */ ; curArg < args.length; curArg++) {
                 String arg = args[curArg];
@@ -430,12 +452,18 @@ class ZygoteConnection {
                     debugFlags |= Zygote.DEBUG_ENABLE_SAFEMODE;
                 } else if (arg.equals("--enable-checkjni")) {
                     debugFlags |= Zygote.DEBUG_ENABLE_CHECKJNI;
+                } else if (arg.equals("--generate-debug-info")) {
+                    debugFlags |= Zygote.DEBUG_GENERATE_DEBUG_INFO;
+                } else if (arg.equals("--always-jit")) {
+                    debugFlags |= Zygote.DEBUG_ALWAYS_JIT;
+                } else if (arg.equals("--native-debuggable")) {
+                    debugFlags |= Zygote.DEBUG_NATIVE_DEBUGGABLE;
                 } else if (arg.equals("--enable-jni-logging")) {
                     debugFlags |= Zygote.DEBUG_ENABLE_JNI_LOGGING;
                 } else if (arg.equals("--enable-assert")) {
                     debugFlags |= Zygote.DEBUG_ENABLE_ASSERT;
-                } else if (arg.equals("--runtime-init")) {
-                    runtimeInit = true;
+                } else if (arg.equals("--runtime-args")) {
+                    seenRuntimeArgs = true;
                 } else if (arg.startsWith("--seinfo=")) {
                     if (seInfoSpecified) {
                         throw new IllegalArgumentException(
@@ -480,17 +508,6 @@ class ZygoteConnection {
                     }
 
                     rlimits.add(rlimitTuple);
-                } else if (arg.equals("-classpath")) {
-                    if (classpath != null) {
-                        throw new IllegalArgumentException(
-                                "Duplicate arg specified");
-                    }
-                    try {
-                        classpath = args[++curArg];
-                    } catch (IndexOutOfBoundsException ex) {
-                        throw new IllegalArgumentException(
-                                "-classpath requires argument");
-                    }
                 } else if (arg.startsWith("--setgroups=")) {
                     if (gids != null) {
                         throw new IllegalArgumentException(
@@ -522,26 +539,43 @@ class ZygoteConnection {
                                 "Duplicate arg specified");
                     }
                     niceName = arg.substring(arg.indexOf('=') + 1);
-                } else if (arg.equals("--mount-external-multiuser")) {
-                    mountExternal = Zygote.MOUNT_EXTERNAL_MULTIUSER;
-                } else if (arg.equals("--mount-external-multiuser-all")) {
-                    mountExternal = Zygote.MOUNT_EXTERNAL_MULTIUSER_ALL;
+                } else if (arg.equals("--mount-external-default")) {
+                    mountExternal = Zygote.MOUNT_EXTERNAL_DEFAULT;
+                } else if (arg.equals("--mount-external-read")) {
+                    mountExternal = Zygote.MOUNT_EXTERNAL_READ;
+                } else if (arg.equals("--mount-external-write")) {
+                    mountExternal = Zygote.MOUNT_EXTERNAL_WRITE;
                 } else if (arg.equals("--query-abi-list")) {
                     abiListQuery = true;
+                } else if (arg.startsWith("--instruction-set=")) {
+                    instructionSet = arg.substring(arg.indexOf('=') + 1);
+                } else if (arg.startsWith("--app-data-dir=")) {
+                    appDataDir = arg.substring(arg.indexOf('=') + 1);
+                } else if (arg.equals("--preload-package")) {
+                    preloadPackage = args[++curArg];
+                    preloadPackageLibs = args[++curArg];
                 } else {
                     break;
                 }
             }
 
-            if (runtimeInit && classpath != null) {
-                throw new IllegalArgumentException(
-                        "--runtime-init and -classpath are incompatible");
+            if (abiListQuery) {
+                if (args.length - curArg > 0) {
+                    throw new IllegalArgumentException("Unexpected arguments after --query-abi-list.");
+                }
+            } else if (preloadPackage != null) {
+                if (args.length - curArg > 0) {
+                    throw new IllegalArgumentException(
+                            "Unexpected arguments after --preload-package.");
+                }
+            } else {
+                if (!seenRuntimeArgs) {
+                    throw new IllegalArgumentException("Unexpected argument : " + args[curArg]);
+                }
+
+                remainingArgs = new String[args.length - curArg];
+                System.arraycopy(args, curArg, remainingArgs, 0, remainingArgs.length);
             }
-
-            remainingArgs = new String[args.length - curArg];
-
-            System.arraycopy(args, curArg, remainingArgs, 0,
-                    remainingArgs.length);
         }
     }
 
@@ -579,7 +613,7 @@ class ZygoteConnection {
         }
 
         // See bug 1092107: large argc can be used for a DOS attack
-        if (argc > MAX_ZYGOTE_ARGC) {   
+        if (argc > MAX_ZYGOTE_ARGC) {
             throw new IOException("max arg count exceeded");
         }
 
@@ -596,63 +630,30 @@ class ZygoteConnection {
     }
 
     /**
-     * Applies zygote security policy per bugs #875058 and #1082165. 
-     * Based on the credentials of the process issuing a zygote command:
-     * <ol>
-     * <li> uid 0 (root) may specify any uid, gid, and setgroups() list
-     * <li> uid 1000 (Process.SYSTEM_UID) may specify any uid &gt; 1000 in normal
+     * uid 1000 (Process.SYSTEM_UID) may specify any uid &gt; 1000 in normal
      * operation. It may also specify any gid and setgroups() list it chooses.
      * In factory test mode, it may specify any UID.
-     * <li> Any other uid may not specify any uid, gid, or setgroups list. The
-     * uid and gid will be inherited from the requesting process.
-     * </ul>
      *
      * @param args non-null; zygote spawner arguments
      * @param peer non-null; peer credentials
      * @throws ZygoteSecurityException
      */
-    private static void applyUidSecurityPolicy(Arguments args, Credentials peer,
-            String peerSecurityContext)
+    private static void applyUidSecurityPolicy(Arguments args, Credentials peer)
             throws ZygoteSecurityException {
 
-        int peerUid = peer.getUid();
-
-        if (peerUid == 0) {
-            // Root can do what it wants
-        } else if (peerUid == Process.SYSTEM_UID ) {
-            // System UID is restricted, except in factory test mode
+        if (peer.getUid() == Process.SYSTEM_UID) {
             String factoryTest = SystemProperties.get("ro.factorytest");
             boolean uidRestricted;
 
             /* In normal operation, SYSTEM_UID can only specify a restricted
              * set of UIDs. In factory test mode, SYSTEM_UID may specify any uid.
              */
-            uidRestricted  
-                 = !(factoryTest.equals("1") || factoryTest.equals("2"));
+            uidRestricted = !(factoryTest.equals("1") || factoryTest.equals("2"));
 
-            if (uidRestricted
-                    && args.uidSpecified && (args.uid < Process.SYSTEM_UID)) {
+            if (uidRestricted && args.uidSpecified && (args.uid < Process.SYSTEM_UID)) {
                 throw new ZygoteSecurityException(
                         "System UID may not launch process with UID < "
-                                + Process.SYSTEM_UID);
-            }
-        } else {
-            // Everything else
-            if (args.uidSpecified || args.gidSpecified
-                || args.gids != null) {
-                throw new ZygoteSecurityException(
-                        "App UIDs may not specify uid's or gid's");
-            }
-        }
-
-        if (args.uidSpecified || args.gidSpecified || args.gids != null) {
-            boolean allowed = SELinux.checkSELinuxAccess(peerSecurityContext,
-                                                         peerSecurityContext,
-                                                         "zygote",
-                                                         "specifyids");
-            if (!allowed) {
-                throw new ZygoteSecurityException(
-                        "Peer may not specify uid's or gid's");
+                        + Process.SYSTEM_UID);
             }
         }
 
@@ -666,7 +667,6 @@ class ZygoteConnection {
             args.gidSpecified = true;
         }
     }
-
 
     /**
      * Applies debugger system properties to the zygote arguments.
@@ -684,44 +684,6 @@ class ZygoteConnection {
     }
 
     /**
-     * Applies zygote security policy per bug #1042973. Based on the credentials
-     * of the process issuing a zygote command:
-     * <ol>
-     * <li> peers of  uid 0 (root) and uid 1000 (Process.SYSTEM_UID)
-     * may specify any rlimits.
-     * <li> All other uids may not specify rlimits.
-     * </ul>
-     * @param args non-null; zygote spawner arguments
-     * @param peer non-null; peer credentials
-     * @throws ZygoteSecurityException
-     */
-    private static void applyRlimitSecurityPolicy(
-            Arguments args, Credentials peer, String peerSecurityContext)
-            throws ZygoteSecurityException {
-
-        int peerUid = peer.getUid();
-
-        if (!(peerUid == 0 || peerUid == Process.SYSTEM_UID)) {
-            // All peers with UID other than root or SYSTEM_UID
-            if (args.rlimits != null) {
-                throw new ZygoteSecurityException(
-                        "This UID may not specify rlimits.");
-            }
-        }
-
-        if (args.rlimits != null) {
-            boolean allowed = SELinux.checkSELinuxAccess(peerSecurityContext,
-                                                         peerSecurityContext,
-                                                         "zygote",
-                                                         "specifyrlimits");
-            if (!allowed) {
-                throw new ZygoteSecurityException(
-                        "Peer may not specify rlimits");
-            }
-         }
-    }
-
-    /**
      * Applies zygote security policy.
      * Based on the credentials of the process issuing a zygote command:
      * <ol>
@@ -734,61 +696,16 @@ class ZygoteConnection {
      * @param peer non-null; peer credentials
      * @throws ZygoteSecurityException
      */
-    private static void applyInvokeWithSecurityPolicy(Arguments args, Credentials peer,
-            String peerSecurityContext)
+    private static void applyInvokeWithSecurityPolicy(Arguments args, Credentials peer)
             throws ZygoteSecurityException {
         int peerUid = peer.getUid();
 
-        if (args.invokeWith != null && peerUid != 0) {
-            throw new ZygoteSecurityException("Peer is not permitted to specify "
-                    + "an explicit invoke-with wrapper command");
+        if (args.invokeWith != null && peerUid != 0 &&
+            (args.debugFlags & Zygote.DEBUG_ENABLE_DEBUGGER) == 0) {
+            throw new ZygoteSecurityException("Peer is permitted to specify an"
+                    + "explicit invoke-with wrapper command only for debuggable"
+                    + "applications.");
         }
-
-        if (args.invokeWith != null) {
-            boolean allowed = SELinux.checkSELinuxAccess(peerSecurityContext,
-                                                         peerSecurityContext,
-                                                         "zygote",
-                                                         "specifyinvokewith");
-            if (!allowed) {
-                throw new ZygoteSecurityException("Peer is not permitted to specify "
-                    + "an explicit invoke-with wrapper command");
-            }
-        }
-    }
-
-    /**
-     * Applies zygote security policy for SELinux information.
-     *
-     * @param args non-null; zygote spawner arguments
-     * @param peer non-null; peer credentials
-     * @throws ZygoteSecurityException
-     */
-    private static void applyseInfoSecurityPolicy(
-            Arguments args, Credentials peer, String peerSecurityContext)
-            throws ZygoteSecurityException {
-        int peerUid = peer.getUid();
-
-        if (args.seInfo == null) {
-            // nothing to check
-            return;
-        }
-
-        if (!(peerUid == 0 || peerUid == Process.SYSTEM_UID)) {
-            // All peers with UID other than root or SYSTEM_UID
-            throw new ZygoteSecurityException(
-                    "This UID may not specify SELinux info.");
-        }
-
-        boolean allowed = SELinux.checkSELinuxAccess(peerSecurityContext,
-                                                     peerSecurityContext,
-                                                     "zygote",
-                                                     "specifyseinfo");
-        if (!allowed) {
-            throw new ZygoteSecurityException(
-                    "Peer may not specify SELinux info");
-        }
-
-        return;
     }
 
     /**
@@ -798,15 +715,18 @@ class ZygoteConnection {
      */
     public static void applyInvokeWithSystemProperty(Arguments args) {
         if (args.invokeWith == null && args.niceName != null) {
-            if (args.niceName != null) {
-                String property = "wrap." + args.niceName;
-                if (property.length() > 31) {
+            String property = "wrap." + args.niceName;
+            if (property.length() > 31) {
+                // Properties with a trailing "." are illegal.
+                if (property.charAt(30) != '.') {
                     property = property.substring(0, 31);
+                } else {
+                    property = property.substring(0, 30);
                 }
-                args.invokeWith = SystemProperties.get(property);
-                if (args.invokeWith != null && args.invokeWith.length() == 0) {
-                    args.invokeWith = null;
-                }
+            }
+            args.invokeWith = SystemProperties.get(property);
+            if (args.invokeWith != null && args.invokeWith.length() == 0) {
+                args.invokeWith = null;
             }
         }
     }
@@ -822,13 +742,12 @@ class ZygoteConnection {
      * @param newStderr null-ok; stream to use for stderr until stdio
      * is reopened.
      *
-     * @throws ZygoteInit.MethodAndArgsCaller on success to
+     * @throws Zygote.MethodAndArgsCaller on success to
      * trampoline to code that invokes static main.
      */
     private void handleChildProc(Arguments parsedArgs,
             FileDescriptor[] descriptors, FileDescriptor pipeFd, PrintStream newStderr)
-            throws ZygoteInit.MethodAndArgsCaller {
-
+            throws Zygote.MethodAndArgsCaller {
         /**
          * By the time we get here, the native code has closed the two actual Zygote
          * socket connections, and substituted /dev/null in their place.  The LocalSocket
@@ -836,18 +755,17 @@ class ZygoteConnection {
          */
 
         closeSocket();
-        ZygoteInit.closeServerSocket();
-
         if (descriptors != null) {
             try {
-                ZygoteInit.reopenStdio(descriptors[0],
-                        descriptors[1], descriptors[2]);
+                Os.dup2(descriptors[0], STDIN_FILENO);
+                Os.dup2(descriptors[1], STDOUT_FILENO);
+                Os.dup2(descriptors[2], STDERR_FILENO);
 
                 for (FileDescriptor fd: descriptors) {
                     IoUtils.closeQuietly(fd);
                 }
                 newStderr = System.err;
-            } catch (IOException ex) {
+            } catch (ErrnoException ex) {
                 Log.e(TAG, "Error reopening stdio", ex);
             }
         }
@@ -856,47 +774,16 @@ class ZygoteConnection {
             Process.setArgV0(parsedArgs.niceName);
         }
 
-        if (parsedArgs.runtimeInit) {
-            if (parsedArgs.invokeWith != null) {
-                WrapperInit.execApplication(parsedArgs.invokeWith,
-                        parsedArgs.niceName, parsedArgs.targetSdkVersion,
-                        pipeFd, parsedArgs.remainingArgs);
-            } else {
-                RuntimeInit.zygoteInit(parsedArgs.targetSdkVersion,
-                        parsedArgs.remainingArgs);
-            }
+        // End of the postFork event.
+        Trace.traceEnd(Trace.TRACE_TAG_ACTIVITY_MANAGER);
+        if (parsedArgs.invokeWith != null) {
+            WrapperInit.execApplication(parsedArgs.invokeWith,
+                    parsedArgs.niceName, parsedArgs.targetSdkVersion,
+                    VMRuntime.getCurrentInstructionSet(),
+                    pipeFd, parsedArgs.remainingArgs);
         } else {
-            String className;
-            try {
-                className = parsedArgs.remainingArgs[0];
-            } catch (ArrayIndexOutOfBoundsException ex) {
-                logAndPrintError(newStderr,
-                        "Missing required class name argument", null);
-                return;
-            }
-
-            String[] mainArgs = new String[parsedArgs.remainingArgs.length - 1];
-            System.arraycopy(parsedArgs.remainingArgs, 1,
-                    mainArgs, 0, mainArgs.length);
-
-            if (parsedArgs.invokeWith != null) {
-                WrapperInit.execStandalone(parsedArgs.invokeWith,
-                        parsedArgs.classpath, className, mainArgs);
-            } else {
-                ClassLoader cloader;
-                if (parsedArgs.classpath != null) {
-                    cloader = new PathClassLoader(parsedArgs.classpath,
-                            ClassLoader.getSystemClassLoader());
-                } else {
-                    cloader = ClassLoader.getSystemClassLoader();
-                }
-
-                try {
-                    ZygoteInit.invokeStaticMain(cloader, className, mainArgs);
-                } catch (RuntimeException ex) {
-                    logAndPrintError(newStderr, "Error starting.", ex);
-                }
-            }
+            RuntimeInit.zygoteInit(parsedArgs.targetSdkVersion,
+                    parsedArgs.remainingArgs, null /* classLoader */);
         }
     }
 
@@ -973,8 +860,8 @@ class ZygoteConnection {
     private void setChildPgid(int pid) {
         // Try to move the new child into the peer's process group.
         try {
-            ZygoteInit.setpgid(pid, ZygoteInit.getpgid(peer.getPid()));
-        } catch (IOException ex) {
+            Os.setpgid(pid, Os.getpgid(peer.getPid()));
+        } catch (ErrnoException ex) {
             // This exception is expected in the case where
             // the peer is not in our session
             // TODO get rid of this log message in the case where

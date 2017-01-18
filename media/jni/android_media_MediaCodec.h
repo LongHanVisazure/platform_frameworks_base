@@ -21,25 +21,34 @@
 
 #include <media/hardware/CryptoAPI.h>
 #include <media/stagefright/foundation/ABase.h>
+#include <media/stagefright/foundation/AHandler.h>
 #include <utils/Errors.h>
-#include <utils/RefBase.h>
 
 namespace android {
 
+struct ABuffer;
 struct ALooper;
 struct AMessage;
 struct AString;
 struct ICrypto;
-struct IGraphicBufferProducer;
+class IGraphicBufferProducer;
 struct MediaCodec;
+struct PersistentSurface;
 class Surface;
 
-struct JMediaCodec : public RefBase {
+struct JMediaCodec : public AHandler {
     JMediaCodec(
             JNIEnv *env, jobject thiz,
             const char *name, bool nameIsType, bool encoder);
 
     status_t initCheck() const;
+
+    void registerSelf();
+    void release();
+
+    status_t enableOnFrameRenderedListener(jboolean enable);
+
+    status_t setCallback(jobject cb);
 
     status_t configure(
             const sp<AMessage> &format,
@@ -47,10 +56,15 @@ struct JMediaCodec : public RefBase {
             const sp<ICrypto> &crypto,
             int flags);
 
+    status_t setSurface(
+            const sp<IGraphicBufferProducer> &surface);
+
     status_t createInputSurface(sp<IGraphicBufferProducer>* bufferProducer);
+    status_t setInputSurface(const sp<PersistentSurface> &surface);
 
     status_t start();
     status_t stop();
+    status_t reset();
 
     status_t flush();
 
@@ -67,6 +81,7 @@ struct JMediaCodec : public RefBase {
             const uint8_t key[16],
             const uint8_t iv[16],
             CryptoPlugin::Mode mode,
+            const CryptoPlugin::Pattern &pattern,
             int64_t presentationTimeUs,
             uint32_t flags,
             AString *errorDetailMsg);
@@ -76,14 +91,23 @@ struct JMediaCodec : public RefBase {
     status_t dequeueOutputBuffer(
             JNIEnv *env, jobject bufferInfo, size_t *index, int64_t timeoutUs);
 
-    status_t releaseOutputBuffer(size_t index, bool render);
+    status_t releaseOutputBuffer(
+            size_t index, bool render, bool updatePTS, int64_t timestampNs);
 
     status_t signalEndOfInputStream();
 
-    status_t getOutputFormat(JNIEnv *env, jobject *format) const;
+    status_t getFormat(JNIEnv *env, bool input, jobject *format) const;
+
+    status_t getOutputFormat(JNIEnv *env, size_t index, jobject *format) const;
 
     status_t getBuffers(
             JNIEnv *env, bool input, jobjectArray *bufArray) const;
+
+    status_t getBuffer(
+            JNIEnv *env, bool input, size_t index, jobject *buf) const;
+
+    status_t getImage(
+            JNIEnv *env, bool input, size_t index, jobject *image) const;
 
     status_t getName(JNIEnv *env, jstring *name) const;
 
@@ -94,13 +118,42 @@ struct JMediaCodec : public RefBase {
 protected:
     virtual ~JMediaCodec();
 
+    virtual void onMessageReceived(const sp<AMessage> &msg);
+
 private:
+    enum {
+        kWhatCallbackNotify,
+        kWhatFrameRendered,
+    };
+
     jclass mClass;
     jweak mObject;
     sp<Surface> mSurfaceTextureClient;
 
+    // java objects cached
+    jclass mByteBufferClass;
+    jobject mNativeByteOrderObj;
+    jmethodID mByteBufferOrderMethodID;
+    jmethodID mByteBufferPositionMethodID;
+    jmethodID mByteBufferLimitMethodID;
+    jmethodID mByteBufferAsReadOnlyBufferMethodID;
+
     sp<ALooper> mLooper;
     sp<MediaCodec> mCodec;
+
+    sp<AMessage> mCallbackNotification;
+    sp<AMessage> mOnFrameRenderedNotification;
+
+    status_t mInitStatus;
+
+    status_t createByteBufferFromABuffer(
+            JNIEnv *env, bool readOnly, bool clearBuffer, const sp<ABuffer> &buffer,
+            jobject *buf) const;
+
+    void cacheJavaObjects(JNIEnv *env);
+    void deleteJavaObjects(JNIEnv *env);
+    void handleCallback(const sp<AMessage> &msg);
+    void handleFrameRenderedNotification(const sp<AMessage> &msg);
 
     DISALLOW_EVIL_CONSTRUCTORS(JMediaCodec);
 };

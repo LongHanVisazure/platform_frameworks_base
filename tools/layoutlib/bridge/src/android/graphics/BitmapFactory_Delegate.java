@@ -22,7 +22,8 @@ import com.android.ninepatch.NinePatchChunk;
 import com.android.resources.Density;
 import com.android.tools.layoutlib.annotations.LayoutlibDelegate;
 
-import android.content.res.BridgeResources.NinePatchInputStream;
+import android.annotation.Nullable;
+import com.android.layoutlib.bridge.util.NinePatchInputStream;
 import android.graphics.BitmapFactory.Options;
 import android.graphics.Bitmap_Delegate.BitmapCreateFlags;
 
@@ -48,7 +49,7 @@ import java.util.Set;
 
     @LayoutlibDelegate
     /*package*/ static Bitmap nativeDecodeStream(InputStream is, byte[] storage,
-            Rect padding, Options opts) {
+            @Nullable Rect padding, @Nullable Options opts) {
         Bitmap bm = null;
 
         Density density = Density.MEDIUM;
@@ -58,6 +59,7 @@ import java.util.Set;
             if (opts.inPremultiplied) {
                 bitmapCreateFlags.add(BitmapCreateFlags.PREMULTIPLIED);
             }
+            opts.inScaled = false;
         }
 
         try {
@@ -77,18 +79,20 @@ import java.util.Set;
                 // put the chunk in the bitmap
                 bm.setNinePatchChunk(NinePatch_Delegate.serialize(chunk));
 
-                // read the padding
-                int[] paddingarray = chunk.getPadding();
-                padding.left = paddingarray[0];
-                padding.top = paddingarray[1];
-                padding.right = paddingarray[2];
-                padding.bottom = paddingarray[3];
+                if (padding != null) {
+                    // read the padding
+                    int[] paddingArray = chunk.getPadding();
+                    padding.left = paddingArray[0];
+                    padding.top = paddingArray[1];
+                    padding.right = paddingArray[2];
+                    padding.bottom = paddingArray[3];
+                }
             } else {
                 // load the bitmap directly.
                 bm = Bitmap_Delegate.createBitmap(is, bitmapCreateFlags, density);
             }
         } catch (IOException e) {
-            Bridge.getLog().error(null,"Failed to load image" , e, null);
+            Bridge.getLog().error(null, "Failed to load image", e, null);
         }
 
         return bm;
@@ -117,5 +121,36 @@ import java.util.Set;
     @LayoutlibDelegate
     /*package*/ static boolean nativeIsSeekable(FileDescriptor fd) {
         return true;
+    }
+
+    /**
+     * Set the newly decoded bitmap's density based on the Options.
+     *
+     * Copied from {@link BitmapFactory#setDensityFromOptions(Bitmap, Options)}.
+     */
+    @LayoutlibDelegate
+    /*package*/ static void setDensityFromOptions(Bitmap outputBitmap, Options opts) {
+        if (outputBitmap == null || opts == null) return;
+
+        final int density = opts.inDensity;
+        if (density != 0) {
+            outputBitmap.setDensity(density);
+            final int targetDensity = opts.inTargetDensity;
+            if (targetDensity == 0 || density == targetDensity || density == opts.inScreenDensity) {
+                return;
+            }
+
+            // --- Change from original implementation begins ---
+            // LayoutLib doesn't scale the nine patch when decoding it. Hence, don't change the
+            // density of the source bitmap in case of ninepatch.
+
+            if (opts.inScaled) {
+            // --- Change from original implementation ends. ---
+                outputBitmap.setDensity(targetDensity);
+            }
+        } else if (opts.inBitmap != null) {
+            // bitmap was reused, ensure density is reset
+            outputBitmap.setDensity(Bitmap.getDefaultDensity());
+        }
     }
 }

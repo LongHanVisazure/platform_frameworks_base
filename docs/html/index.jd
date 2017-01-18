@@ -1,95 +1,131 @@
 fullpage=true
-no_footer_links=true
-carousel=true
+excludeFromSuggestions=true
 page.metaDescription=The official site for Android developers. Provides the Android SDK and documentation for app developers and designers.
 page.customHeadTag=<meta name="google-site-verification" content="sa-bIAI6GKvct3f61-WpRguHq-aNjtF7xJjMTSi79as" />
+nonavpage=true
 
 @jd:body
 
-
-<div class="wrap">
-    <!-- Slideshow -->
-    <div class="slideshow-container slideshow-home col-16">
-        <a href="" class="slideshow-prev">Prev</a>
-        <a href="" class="slideshow-next">Next</a>
-        <div class="frame">
-            <ul>
-                <!-- set explicit widths as needed to prevent overflow issues -->
-
-                <li class="item carousel-home">
-                  <div class="content-left col-7" style="width:400px;">
-                    <a href="{@docRoot}about/versions/kitkat.html">
-                      <img src="{@docRoot}images/home/kk-hero.jpg" width="242" style="padding-top:72px;">
-                    </a>
-                  </div>
-                  <div class="content-right col-4" style="width:340px;">
-                    <h1>Android 4.4 KitKat!</h1>
-                    <p>A new version of Android is here, with great new features, APIs, and tools for developers.</p>
-                    <p>Android 4.4 is built to run on more devices than ever before, and gives you more ways to showcase your content and create beautiful, useful, and innovative apps.</p>
-                    <p>Learn about what's new in the Platform Highlights and see the API Overview for details.</p>
-                    <p><a href="{@docRoot}about/versions/kitkat.html" class="button">Check out the highlights</a></p>
-                  </div>
-                </li>
-
-                <li class="item carousel-home">
-                  <div class="content-left col-11" style="padding-top:65px;">
-                    <a href="https://www.youtube.com/watch?v=sONcojECWXs&list=PLWz5rJ2EKKc-2quE-o0enpILZF3nBZg_K&index=1">
-                      <img src="{@docRoot}images/title-devbytes-kk.jpg" style="margin-top:0px;width:600px;">
-                    </a>
-                  </div>
-                  <div class="content-right col-4">
-                    <h1 style="white-space:nowrap;line-height:1.2em;">DevBytes: <br />Android 4.4</h1>
-                    <p>Join the DevBytes team for a look at what's new in Android 4.4 KitKat&nbsp;&mdash; new ways to make your apps beautiful, printing, storage access framework, and more.</p>
-                    <p><a href="https://www.youtube.com/watch?v=sONcojECWXs&list=PLWz5rJ2EKKc-2quE-o0enpILZF3nBZg_K&index=1" class="button">Watch the video </a></p>
-                  </div>
-                </li>
-
-                <li class="item carousel-home">
-                  <div class="content-left col-19" style="width:580px;">
-                    <a href="{@docRoot}design/patterns/new.html">
-                      <img src="{@docRoot}design/media/design_elements_landing.png" style="margin-top:30px">
-                    </a>
-                  </div>
-                  <div class="content-right col-4" style="width:280px;">
-                    <h1>Design for Android KitKat</h1>
-                    <p>Android KitKat brings a refreshed UI with updated styles, patterns, and gestures to use in your apps. </p>
-                    <p>We've updated the Android Design guidelines and added new pages on branding, fullscreen, and more. </p>
-                    <p><a href="{@docRoot}design/patterns/new.html" class="button">See what's new</a></p>
-                  </div>
-                </li>
-
-                <li class="item carousel-home">
-                  <div class="content-left col-11" style="padding-top:65px;">
-                    <a href="http://www.youtube.com/watch?v=6QHkv-bSlds&list=PLWz5rJ2EKKc8j2B95zGMb8muZvrIy-wcF&index=1">
-                      <img src="{@docRoot}images/title-adia-kk.png" style="margin-top:0px;width:600px;">
-                    </a>
-                  </div>
-                  <div class="content-right col-4">
-                    <h1 style="white-space:nowrap;line-height:1.2em;">ADIA: <br />Android 4.4</h1>
-                    </p>Join the Android Design in Action team for a walkthrough of new developer features, UX changes, and updates to design guidelines in Android 4.4.</p>
-                    <p><a href="http://www.youtube.com/watch?v=6QHkv-bSlds&list=PLWz5rJ2EKKc8j2B95zGMb8muZvrIy-wcF&index=1" class="button">Watch the video </a></p>
-                  </div>
-                </li>
-           </ul>
-        </div>
+<section class="dac-expand dac-hero" style="background-color:#b2dfdb;">
+  <div class="wrap" style="max-width:1000px;margin-top:0">
+    <div class="col-7of16 col-push-8of16">
+      <a href="{@docRoot}about/versions/nougat/index.html">
+        <h1 class="dac-hero-title" style="color:#004d40">Android 7.0 Nougat!</h1>
+        <p class="dac-hero-description" style="color:#004d40">
+          <strong>Android 7.0 Nougat is here!</strong>
+          Get your apps ready for the latest version of Android, with new system
+          behaviors to <strong>save battery and memory</strong>.
+          Extend your apps with <strong>multi-window UI</strong>,
+          <strong>direct reply notifications</strong> and more.
+        </p>
+        <a class="dac-hero-cta" href="{@docRoot}about/versions/nougat/index.html" style="color:#004d40">
+          <span class="dac-sprite dac-auto-chevron" style="background-color:#b2dfdb"></span>
+          Learn more
+        </a>
+        </a>
+      </a>
     </div>
-
-<!-- /End slideshow -->
-
-    <a href="" id="pauseButton" style="display:none">pause</a>
-
-
-</div>
-<div class="wrap" style="padding-bottom:20px">
-    <!-- Section links -->
-    <div class="home-sections">
-        <ul>
-            <li><a href="{@docRoot}about/index.html">About Android</a></li>
-            <li><a href="{@docRoot}sdk/index.html">Get the SDK</a></li>
-            <li><a href="http://source.android.com">Open Source</a></li>
-            <li><a href="{@docRoot}support.html">Support</a></li>
-            <li class="last"><a href="{@docRoot}legal.html">Legal</a></li>
-        </ul>
+    <div class="col-6of16 col-pull-6of16 dac-hero-figure" style="padding-left:1em;padding-top:1em;">
+      <a href="{@docRoot}about/versions/nougat/index.html">
+        <img class="dac-hero-image" src="{@docRoot}images/home/nougat_bg.jpg"
+             srcset="{@docRoot}images/home/nougat_bg.jpg 1x,
+             {@docRoot}images/home/nougat_bg_2x.jpg 2x">
+        </a>
     </div>
-    <!-- /Section links -->
+  </div>
+</section>
+
+<div class="dac-section dac-slim dac-gray dac-expand">
+  <div class="wrap dac-offset-parent">
+    <a class="dac-fab dac-scroll-button" data-scroll-button href="#build-apps">
+      <i class="dac-sprite dac-arrow-down-gray"></i>
+    </a>
+    <ul class="dac-actions">
+      <li class="dac-action">
+        <a class="dac-action-link" href="{@docRoot}studio/index.html">
+          <i class="dac-action-sprite dac-sprite dac-auto-chevron-large"></i>
+          Get Android Studio
+        </a>
+      </li>
+      <li class="dac-action">
+        <a class="dac-action-link" href="{@docRoot}samples/index.html">
+          <i class="dac-action-sprite dac-sprite dac-auto-chevron-large"></i>
+          Browse sample code
+        </a>
+      </li>
+      <li class="dac-action">
+        <a class="dac-action-link" href="{@docRoot}distribute/stories/index.html">
+          <i class="dac-action-sprite dac-sprite dac-auto-chevron-large"></i>
+          Watch stories
+        </a>
+      </li>
+    </ul>
+  </div><!-- end .wrap -->
+</div><!-- end .dac-actions -->
+
+
+<section class="dac-expand dac-hero" style="background-color:#FFF0B4;">
+  <div class="wrap" style="max-width:1000px;margin-top:0;overflow:auto">
+    <div class="col-7of16 col-push-8of16 dac-hero-figure">
+      <a href="/studio/index.html">
+        <img class="dac-hero-image" style="padding-top:24px"
+          src="/studio/images/hero_image_studio_2-2_2x.png">
+      </a>
+    </div>
+    <div class="col-7of16 col-pull-6of16">
+        <h1 class="dac-hero-title" style="color:#004d40">Android Studio 2.2</h1>
+
+<p class="dac-hero-description" style="color:#004d40">Packed with 20+ new
+features, Android Studio 2.2 focuses on speed, smarts, and Android platform
+support.</p>
+
+<p class="dac-hero-description" style="color:#004d40">Develop faster with
+features such as the new Layout Editor, and develop smarter with the new APK
+analyzer, expanded code analysis and more.</p>
+
+<p class="dac-hero-description" style="color:#004d40">Plus, this update
+includes support for all the latest developer features in Android 7.0 Nougat,
+with an updated emulator to test them all out.</p>
+
+<p style="margin-top:24px">
+   <a class="dac-hero-cta" href="/studio/index.html" style="color:#004d40">
+      <span class="dac-sprite dac-auto-chevron"></span>
+      Get Android Studio 2.2
+    </a>
+  &nbsp;&nbsp;&nbsp;&nbsp;<wbr>
+   <a class="dac-hero-cta" href="/studio/features.html" style="color:#004d40">
+    <span class="dac-sprite dac-auto-chevron"></span>
+    See more features</a>
+</p>
+    </div>
+  </div>
+</section>
+
+
+<section class="dac-section dac-light" id="build-apps"><div class="wrap">
+  <h1 class="dac-section-title">Build Beautiful Apps</h1>
+  <div class="dac-section-subtitle">
+    Resources to get you started with designing and developing for Android.
+  </div>
+  <div class="resource-widget resource-flow-layout col-16"
+       data-query="collection:index/primary"
+       data-cardSizes="6x6"
+       data-maxResults="3"></div>
+</div></section>
+
+<div class="dac-hero-carousel" data-carousel-query="collection:index/secondary/carousel">
 </div>
+
+<section class="dac-section dac-gray"><div class="wrap">
+  <div class="cols"><div class="col-10of12 col-push-1of12">
+    <h1 class="dac-section-title">Build for a Multi-Screen World</h1>
+    <div class="dac-section-subtitle">
+      Android runs on billions of handheld devices around the world,
+      and it now supports these exciting, new form-factors.
+    </div>
+  </div></div>
+  <div class="resource-widget resource-flow-layout col-16"
+       data-query="collection:index/multiscreen"
+       data-cardSizes="6x6"
+       data-maxResults="3"></div>
+</div></section>

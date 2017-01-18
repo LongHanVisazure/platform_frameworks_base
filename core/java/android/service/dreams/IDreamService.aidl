@@ -16,10 +16,13 @@
 
 package android.service.dreams;
 
+import android.os.IRemoteCallback;
+
 /**
  * @hide
  */
 oneway interface IDreamService {
-    void attach(IBinder windowToken);
+    void attach(IBinder windowToken, boolean canDoze, IRemoteCallback started);
     void detach();
+    void wakeUp();
 }

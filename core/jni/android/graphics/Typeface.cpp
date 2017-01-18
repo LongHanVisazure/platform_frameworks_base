@@ -1,193 +1,92 @@
+/*
+ * Copyright (C) 2013 The Android Open Source Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #include "jni.h"
-#include <android_runtime/AndroidRuntime.h>
+#include "core_jni_helpers.h"
 
 #include "GraphicsJNI.h"
-#include "SkStream.h"
+#include "ScopedPrimitiveArray.h"
 #include "SkTypeface.h"
 #include <android_runtime/android_util_AssetManager.h>
 #include <androidfw/AssetManager.h>
+#include <hwui/Typeface.h>
 
 using namespace android;
 
-class AutoJavaStringToUTF8 {
-public:
-    AutoJavaStringToUTF8(JNIEnv* env, jstring str) : fEnv(env), fJStr(str)
-    {
-        fCStr = env->GetStringUTFChars(str, NULL);
-    }
-    ~AutoJavaStringToUTF8()
-    {
-        fEnv->ReleaseStringUTFChars(fJStr, fCStr);
-    }
-    const char* c_str() const { return fCStr; }
-
-private:
-    JNIEnv*     fEnv;
-    jstring     fJStr;
-    const char* fCStr;
-};
-
-static jlong Typeface_create(JNIEnv* env, jobject, jstring name,
-                             jint styleHandle) {
-    SkTypeface::Style style = static_cast<SkTypeface::Style>(styleHandle);
-    SkTypeface* face = NULL;
-
-    if (NULL != name) {
-        AutoJavaStringToUTF8    str(env, name);
-        face = SkTypeface::CreateFromName(str.c_str(), style);
-        // Try to find the closest matching font, using the standard heuristic
-        if (NULL == face) {
-            face = SkTypeface::CreateFromName(str.c_str(), (SkTypeface::Style)(style ^ SkTypeface::kItalic));
-        }
-        for (int i = 0; NULL == face && i < 4; i++) {
-            face = SkTypeface::CreateFromName(str.c_str(), (SkTypeface::Style)i);
-        }
-    }
-
-    // return the default font at the best style if no exact match exists
+static jlong Typeface_createFromTypeface(JNIEnv* env, jobject, jlong familyHandle, jint style) {
+    Typeface* family = reinterpret_cast<Typeface*>(familyHandle);
+    Typeface* face = Typeface::createFromTypeface(family, (SkTypeface::Style)style);
+    // TODO: the following logic shouldn't be necessary, the above should always succeed.
+    // Try to find the closest matching font, using the standard heuristic
     if (NULL == face) {
-        face = SkTypeface::CreateFromName(NULL, style);
+        face = Typeface::createFromTypeface(family, (SkTypeface::Style)(style ^ SkTypeface::kItalic));
+    }
+    for (int i = 0; NULL == face && i < 4; i++) {
+        face = Typeface::createFromTypeface(family, (SkTypeface::Style)i);
     }
     return reinterpret_cast<jlong>(face);
 }
 
-static jlong Typeface_createFromTypeface(JNIEnv* env, jobject, jlong familyHandle, jint style) {
-    SkTypeface* family = reinterpret_cast<SkTypeface*>(familyHandle);
-    SkTypeface* face = SkTypeface::CreateFromTypeface(family, (SkTypeface::Style)style);
-    // Try to find the closest matching font, using the standard heuristic
-    if (NULL == face) {
-        face = SkTypeface::CreateFromTypeface(family, (SkTypeface::Style)(style ^ SkTypeface::kItalic));
-    }
-    for (int i = 0; NULL == face && i < 4; i++) {
-        face = SkTypeface::CreateFromTypeface(family, (SkTypeface::Style)i);
-    }
-    if (NULL == face) {
-        face = SkTypeface::CreateFromName(NULL, (SkTypeface::Style)style);
-    }
+static jlong Typeface_createWeightAlias(JNIEnv* env, jobject, jlong familyHandle, jint weight) {
+    Typeface* family = reinterpret_cast<Typeface*>(familyHandle);
+    Typeface* face = Typeface::createWeightAlias(family, weight);
     return reinterpret_cast<jlong>(face);
 }
 
 static void Typeface_unref(JNIEnv* env, jobject obj, jlong faceHandle) {
-    SkTypeface* face = reinterpret_cast<SkTypeface*>(faceHandle);
-    SkSafeUnref(face);
+    Typeface* face = reinterpret_cast<Typeface*>(faceHandle);
+    if (face != NULL) {
+        face->unref();
+    }
 }
 
 static jint Typeface_getStyle(JNIEnv* env, jobject obj, jlong faceHandle) {
-    SkTypeface* face = reinterpret_cast<SkTypeface*>(faceHandle);
-    return static_cast<jint>(face->style());
+    Typeface* face = reinterpret_cast<Typeface*>(faceHandle);
+    return face->fSkiaStyle;
 }
 
-class AssetStream : public SkStream {
-public:
-    AssetStream(Asset* asset, bool hasMemoryBase) : fAsset(asset)
-    {
-        fMemoryBase = hasMemoryBase ? fAsset->getBuffer(false) : NULL;
+static jlong Typeface_createFromArray(JNIEnv *env, jobject, jlongArray familyArray) {
+    ScopedLongArrayRO families(env, familyArray);
+    std::vector<FontFamily*> familyVec;
+    for (size_t i = 0; i < families.size(); i++) {
+        FontFamily* family = reinterpret_cast<FontFamily*>(families[i]);
+        familyVec.push_back(family);
     }
-
-    virtual ~AssetStream()
-    {
-        delete fAsset;
-    }
-
-    virtual const void* getMemoryBase()
-    {
-        return fMemoryBase;
-    }
-
-	virtual bool rewind()
-    {
-        off64_t pos = fAsset->seek(0, SEEK_SET);
-        return pos != (off64_t)-1;
-    }
-
-	virtual size_t read(void* buffer, size_t size)
-    {
-        ssize_t amount;
-
-        if (NULL == buffer)
-        {
-            if (0 == size)  // caller is asking us for our total length
-                return fAsset->getLength();
-
-            // asset->seek returns new total offset
-            // we want to return amount that was skipped
-
-            off64_t oldOffset = fAsset->seek(0, SEEK_CUR);
-            if (-1 == oldOffset)
-                return 0;
-            off64_t newOffset = fAsset->seek(size, SEEK_CUR);
-            if (-1 == newOffset)
-                return 0;
-
-            amount = newOffset - oldOffset;
-        }
-        else
-        {
-            amount = fAsset->read(buffer, size);
-        }
-
-        if (amount < 0)
-            amount = 0;
-        return amount;
-    }
-
-private:
-    Asset*      fAsset;
-    const void* fMemoryBase;
-};
-
-static jlong Typeface_createFromAsset(JNIEnv* env, jobject,
-                                      jobject jassetMgr,
-                                      jstring jpath) {
-
-    NPE_CHECK_RETURN_ZERO(env, jassetMgr);
-    NPE_CHECK_RETURN_ZERO(env, jpath);
-
-    AssetManager* mgr = assetManagerForJavaObject(env, jassetMgr);
-    if (NULL == mgr) {
-        return NULL;
-    }
-
-    AutoJavaStringToUTF8    str(env, jpath);
-    Asset* asset = mgr->open(str.c_str(), Asset::ACCESS_BUFFER);
-    if (NULL == asset) {
-        return NULL;
-    }
-
-    SkStream* stream = new AssetStream(asset, true);
-    SkTypeface* face = SkTypeface::CreateFromStream(stream);
-    // SkTypeFace::CreateFromStream calls ref() on the stream, so we
-    // need to unref it here or it won't be freed later on
-    stream->unref();
-
-    return reinterpret_cast<jlong>(face);
+    return reinterpret_cast<jlong>(Typeface::createFromFamilies(familyVec));
 }
 
-static jlong Typeface_createFromFile(JNIEnv* env, jobject, jstring jpath) {
-    NPE_CHECK_RETURN_ZERO(env, jpath);
-
-    AutoJavaStringToUTF8 str(env, jpath);
-
-    return reinterpret_cast<jlong>(SkTypeface::CreateFromFile(str.c_str()));
+static void Typeface_setDefault(JNIEnv *env, jobject, jlong faceHandle) {
+    Typeface* face = reinterpret_cast<Typeface*>(faceHandle);
+    return Typeface::setDefault(face);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 
-static JNINativeMethod gTypefaceMethods[] = {
-    { "nativeCreate",        "(Ljava/lang/String;I)J", (void*)Typeface_create },
+static const JNINativeMethod gTypefaceMethods[] = {
     { "nativeCreateFromTypeface", "(JI)J", (void*)Typeface_createFromTypeface },
+    { "nativeCreateWeightAlias",  "(JI)J", (void*)Typeface_createWeightAlias },
     { "nativeUnref",              "(J)V",  (void*)Typeface_unref },
     { "nativeGetStyle",           "(J)I",  (void*)Typeface_getStyle },
-    { "nativeCreateFromAsset",    "(Landroid/content/res/AssetManager;Ljava/lang/String;)J",
-                                           (void*)Typeface_createFromAsset },
-    { "nativeCreateFromFile",     "(Ljava/lang/String;)J",
-                                           (void*)Typeface_createFromFile },
+    { "nativeCreateFromArray",    "([J)J",
+                                           (void*)Typeface_createFromArray },
+    { "nativeSetDefault",         "(J)V",   (void*)Typeface_setDefault },
 };
 
 int register_android_graphics_Typeface(JNIEnv* env)
 {
-    return android::AndroidRuntime::registerNativeMethods(env,
-                                                       "android/graphics/Typeface",
-                                                       gTypefaceMethods,
-                                                       SK_ARRAY_COUNT(gTypefaceMethods));
+    return RegisterMethodsOrDie(env, "android/graphics/Typeface", gTypefaceMethods,
+                                NELEM(gTypefaceMethods));
 }

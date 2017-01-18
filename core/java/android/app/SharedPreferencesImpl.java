@@ -16,6 +16,7 @@
 
 package android.app;
 
+import android.annotation.Nullable;
 import android.content.SharedPreferences;
 import android.os.FileUtils;
 import android.os.Looper;
@@ -45,7 +46,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.WeakHashMap;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutorService;
 
 import libcore.io.IoUtils;
 
@@ -87,20 +87,20 @@ final class SharedPreferencesImpl implements SharedPreferences {
         }
         new Thread("SharedPreferencesImpl-load") {
             public void run() {
-                synchronized (SharedPreferencesImpl.this) {
-                    loadFromDiskLocked();
-                }
+                loadFromDisk();
             }
         }.start();
     }
 
-    private void loadFromDiskLocked() {
-        if (mLoaded) {
-            return;
-        }
-        if (mBackupFile.exists()) {
-            mFile.delete();
-            mBackupFile.renameTo(mFile);
+    private void loadFromDisk() {
+        synchronized (SharedPreferencesImpl.this) {
+            if (mLoaded) {
+                return;
+            }
+            if (mBackupFile.exists()) {
+                mFile.delete();
+                mBackupFile.renameTo(mFile);
+            }
         }
 
         // Debugging
@@ -118,30 +118,30 @@ final class SharedPreferencesImpl implements SharedPreferences {
                     str = new BufferedInputStream(
                             new FileInputStream(mFile), 16*1024);
                     map = XmlUtils.readMapXml(str);
-                } catch (XmlPullParserException e) {
-                    Log.w(TAG, "getSharedPreferences", e);
-                } catch (FileNotFoundException e) {
-                    Log.w(TAG, "getSharedPreferences", e);
-                } catch (IOException e) {
+                } catch (XmlPullParserException | IOException e) {
                     Log.w(TAG, "getSharedPreferences", e);
                 } finally {
                     IoUtils.closeQuietly(str);
                 }
             }
         } catch (ErrnoException e) {
+            /* ignore */
         }
-        mLoaded = true;
-        if (map != null) {
-            mMap = map;
-            mStatTimestamp = stat.st_mtime;
-            mStatSize = stat.st_size;
-        } else {
-            mMap = new HashMap<String, Object>();
+
+        synchronized (SharedPreferencesImpl.this) {
+            mLoaded = true;
+            if (map != null) {
+                mMap = map;
+                mStatTimestamp = stat.st_mtime;
+                mStatSize = stat.st_size;
+            } else {
+                mMap = new HashMap<>();
+            }
+            notifyAll();
         }
-        notifyAll();
     }
 
-    private static File makeBackupFile(File prefsFile) {
+    static File makeBackupFile(File prefsFile) {
         return new File(prefsFile.getPath() + ".bak");
     }
 
@@ -218,7 +218,8 @@ final class SharedPreferencesImpl implements SharedPreferences {
         }
     }
 
-    public String getString(String key, String defValue) {
+    @Nullable
+    public String getString(String key, @Nullable String defValue) {
         synchronized (this) {
             awaitLoadedLocked();
             String v = (String)mMap.get(key);
@@ -226,7 +227,8 @@ final class SharedPreferencesImpl implements SharedPreferences {
         }
     }
 
-    public Set<String> getStringSet(String key, Set<String> defValues) {
+    @Nullable
+    public Set<String> getStringSet(String key, @Nullable Set<String> defValues) {
         synchronized (this) {
             awaitLoadedLocked();
             Set<String> v = (Set<String>) mMap.get(key);
@@ -304,13 +306,13 @@ final class SharedPreferencesImpl implements SharedPreferences {
         private final Map<String, Object> mModified = Maps.newHashMap();
         private boolean mClear = false;
 
-        public Editor putString(String key, String value) {
+        public Editor putString(String key, @Nullable String value) {
             synchronized (this) {
                 mModified.put(key, value);
                 return this;
             }
         }
-        public Editor putStringSet(String key, Set<String> values) {
+        public Editor putStringSet(String key, @Nullable Set<String> values) {
             synchronized (this) {
                 mModified.put(key,
                         (values == null) ? null : new HashSet<String>(values));

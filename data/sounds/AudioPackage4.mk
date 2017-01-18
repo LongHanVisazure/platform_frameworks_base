@@ -1,11 +1,11 @@
 #
 # Audio Package 4
-# 
+#
 # Include this file in a product makefile to include these audio files
 #
 # This is a larger package of sounds than the 1.0 release for devices
 # that have larger internal flash.
-# 
+#
 
 LOCAL_PATH:= frameworks/base/data/sounds
 
@@ -39,12 +39,14 @@ PRODUCT_COPY_FILES += \
 	$(LOCAL_PATH)/effects/KeypressInvalid.ogg:system/media/audio/ui/KeypressInvalid.ogg \
 	$(LOCAL_PATH)/effects/KeypressReturn.ogg:system/media/audio/ui/KeypressReturn.ogg \
 	$(LOCAL_PATH)/effects/VideoRecord.ogg:system/media/audio/ui/VideoRecord.ogg \
+	$(LOCAL_PATH)/effects/VideoStop.ogg:system/media/audio/ui/VideoStop.ogg \
 	$(LOCAL_PATH)/effects/camera_click.ogg:system/media/audio/ui/camera_click.ogg \
 	$(LOCAL_PATH)/effects/LowBattery.ogg:system/media/audio/ui/LowBattery.ogg \
 	$(LOCAL_PATH)/effects/Dock.ogg:system/media/audio/ui/Dock.ogg \
 	$(LOCAL_PATH)/effects/Undock.ogg:system/media/audio/ui/Undock.ogg \
 	$(LOCAL_PATH)/effects/Lock.ogg:system/media/audio/ui/Lock.ogg \
 	$(LOCAL_PATH)/effects/Unlock.ogg:system/media/audio/ui/Unlock.ogg \
+	$(LOCAL_PATH)/effects/ogg/Trusted.ogg:system/media/audio/ui/Trusted.ogg \
 	$(LOCAL_PATH)/Ring_Classic_02.ogg:system/media/audio/ringtones/Ring_Classic_02.ogg \
 	$(LOCAL_PATH)/Ring_Digital_02.ogg:system/media/audio/ringtones/Ring_Digital_02.ogg \
 	$(LOCAL_PATH)/Ring_Synth_04.ogg:system/media/audio/ringtones/Ring_Synth_04.ogg \

@@ -16,6 +16,7 @@
 package android.view;
 
 import android.animation.LayoutTransition;
+import android.annotation.NonNull;
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Rect;
@@ -59,25 +60,30 @@ public class ViewOverlay {
     }
 
     /**
-     * Adds a Drawable to the overlay. The bounds of the drawable should be relative to
+     * Adds a {@link Drawable} to the overlay. The bounds of the drawable should be relative to
      * the host view. Any drawable added to the overlay should be removed when it is no longer
-     * needed or no longer visible.
+     * needed or no longer visible. Adding an already existing {@link Drawable}
+     * is a no-op. Passing <code>null</code> parameter will result in an
+     * {@link IllegalArgumentException} being thrown.
      *
-     * @param drawable The Drawable to be added to the overlay. This drawable will be
-     * drawn when the view redraws its overlay.
+     * @param drawable The {@link Drawable} to be added to the overlay. This drawable will be
+     * drawn when the view redraws its overlay. {@link Drawable}s will be drawn in the order that
+     * they were added.
      * @see #remove(Drawable)
      */
-    public void add(Drawable drawable) {
+    public void add(@NonNull Drawable drawable) {
         mOverlayViewGroup.add(drawable);
     }
 
     /**
-     * Removes the specified Drawable from the overlay.
+     * Removes the specified {@link Drawable} from the overlay. Removing a {@link Drawable} that was
+     * not added with {@link #add(Drawable)} is a no-op. Passing <code>null</code> parameter will
+     * result in an {@link IllegalArgumentException} being thrown.
      *
-     * @param drawable The Drawable to be removed from the overlay.
+     * @param drawable The {@link Drawable} to be removed from the overlay.
      * @see #add(Drawable)
      */
-    public void remove(Drawable drawable) {
+    public void remove(@NonNull Drawable drawable) {
         mOverlayViewGroup.remove(drawable);
     }
 
@@ -119,7 +125,7 @@ public class ViewOverlay {
          * The View for which this is an overlay. Invalidations of the overlay are redirected to
          * this host view.
          */
-        View mHostView;
+        final View mHostView;
 
         /**
          * The set of drawables to draw when the overlay is rendered.
@@ -130,14 +136,19 @@ public class ViewOverlay {
             super(context);
             mHostView = hostView;
             mAttachInfo = mHostView.mAttachInfo;
+
             mRight = hostView.getWidth();
             mBottom = hostView.getHeight();
+            // pass right+bottom directly to RenderNode, since not going through setters
+            mRenderNode.setLeftTopRightBottom(0, 0, mRight, mBottom);
         }
 
-        public void add(Drawable drawable) {
+        public void add(@NonNull Drawable drawable) {
+            if (drawable == null) {
+                throw new IllegalArgumentException("drawable must be non-null");
+            }
             if (mDrawables == null) {
-
-                mDrawables = new ArrayList<Drawable>();
+                mDrawables = new ArrayList<>();
             }
             if (!mDrawables.contains(drawable)) {
                 // Make each drawable unique in the overlay; can't add it more than once
@@ -147,7 +158,10 @@ public class ViewOverlay {
             }
         }
 
-        public void remove(Drawable drawable) {
+        public void remove(@NonNull Drawable drawable) {
+            if (drawable == null) {
+                throw new IllegalArgumentException("drawable must be non-null");
+            }
             if (mDrawables != null) {
                 mDrawables.remove(drawable);
                 invalidate(drawable.getBounds());
@@ -155,7 +169,16 @@ public class ViewOverlay {
             }
         }
 
-        public void add(View child) {
+        @Override
+        protected boolean verifyDrawable(@NonNull Drawable who) {
+            return super.verifyDrawable(who) || (mDrawables != null && mDrawables.contains(who));
+        }
+
+        public void add(@NonNull View child) {
+            if (child == null) {
+                throw new IllegalArgumentException("view must be non-null");
+            }
+
             if (child.getParent() instanceof ViewGroup) {
                 ViewGroup parent = (ViewGroup) child.getParent();
                 if (parent != mHostView && parent.getParent() != null &&
@@ -182,13 +205,20 @@ public class ViewOverlay {
             super.addView(child);
         }
 
-        public void remove(View view) {
+        public void remove(@NonNull View view) {
+            if (view == null) {
+                throw new IllegalArgumentException("view must be non-null");
+            }
+
             super.removeView(view);
         }
 
         public void clear() {
             removeAllViews();
             if (mDrawables != null) {
+                for (Drawable drawable : mDrawables) {
+                    drawable.setCallback(null);
+                }
                 mDrawables.clear();
             }
         }
@@ -202,7 +232,7 @@ public class ViewOverlay {
         }
 
         @Override
-        public void invalidateDrawable(Drawable drawable) {
+        public void invalidateDrawable(@NonNull Drawable drawable) {
             invalidate(drawable.getBounds());
         }
 
@@ -285,7 +315,11 @@ public class ViewOverlay {
             }
         }
 
-        public void invalidateChildFast(View child, final Rect dirty) {
+        /**
+         * @hide
+         */
+        @Override
+        public void damageChild(View child, final Rect dirty) {
             if (mHostView != null) {
                 // Note: This is not a "fast" invalidation. Would be nice to instead invalidate
                 // using DisplayList properties and a dirty rect instead of causing a real
@@ -304,9 +338,9 @@ public class ViewOverlay {
          * @hide
          */
         @Override
-        protected ViewParent invalidateChildInParentFast(int left, int top, Rect dirty) {
+        protected ViewParent damageChildInParent(int left, int top, Rect dirty) {
             if (mHostView instanceof ViewGroup) {
-                return ((ViewGroup) mHostView).invalidateChildInParentFast(left, top, dirty);
+                return ((ViewGroup) mHostView).damageChildInParent(left, top, dirty);
             }
             return null;
         }

@@ -19,10 +19,19 @@ include $(CLEAR_VARS)
 LOCAL_SRC_FILES := \
     com_android_frameworks_coretests_JNITest.cpp
 
-LOCAL_SHARED_LIBRARIES := \
-    libnativehelper
+LOCAL_SDK_VERSION := 16
+
+LOCAL_CFLAGS += -Wall -Werror
 
 LOCAL_MODULE := libframeworks_coretests_jni
+
+# this does not prevent build system
+# from installing library to /system/lib
 LOCAL_MODULE_TAGS := tests
+
+# .. we want to avoid that... so we put it somewhere
+# bionic linker cant find it without outside help (nativetests):
+LOCAL_MODULE_PATH_32 := $($(TARGET_2ND_ARCH_VAR_PREFIX)TARGET_OUT_DATA_NATIVE_TESTS)/$(LOCAL_MODULE)
+LOCAL_MODULE_PATH_64 := $(TARGET_OUT_DATA_NATIVE_TESTS)/$(LOCAL_MODULE)
 
 include $(BUILD_SHARED_LIBRARY)

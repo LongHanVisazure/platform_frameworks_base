@@ -18,6 +18,7 @@ package android.nfc;
 
 import android.app.PendingIntent;
 import android.content.IntentFilter;
+import android.nfc.BeamShareData;
 import android.nfc.NdefMessage;
 import android.nfc.Tag;
 import android.nfc.TechListParcel;
@@ -25,6 +26,9 @@ import android.nfc.IAppCallback;
 import android.nfc.INfcAdapterExtras;
 import android.nfc.INfcTag;
 import android.nfc.INfcCardEmulation;
+import android.nfc.INfcFCardEmulation;
+import android.nfc.INfcUnlockHandler;
+import android.nfc.ITagRemovedCallback;
 import android.os.Bundle;
 
 /**
@@ -34,6 +38,7 @@ interface INfcAdapter
 {
     INfcTag getNfcTagInterface();
     INfcCardEmulation getNfcCardEmulationInterface();
+    INfcFCardEmulation getNfcFCardEmulationInterface();
     INfcAdapterExtras getNfcAdapterExtrasInterface(in String pkg);
 
     int getState();
@@ -42,13 +47,24 @@ interface INfcAdapter
     boolean enableNdefPush();
     boolean disableNdefPush();
     boolean isNdefPushEnabled();
+    void pausePolling(int timeoutInMs);
+    void resumePolling();
 
     void setForegroundDispatch(in PendingIntent intent,
             in IntentFilter[] filters, in TechListParcel techLists);
     void setAppCallback(in IAppCallback callback);
+    oneway void invokeBeam();
+    oneway void invokeBeamInternal(in BeamShareData shareData);
+
+    boolean ignore(int nativeHandle, int debounceMs, ITagRemovedCallback callback);
 
     void dispatch(in Tag tag);
 
     void setReaderMode (IBinder b, IAppCallback callback, int flags, in Bundle extras);
     void setP2pModes(int initatorModes, int targetModes);
+
+    void addNfcUnlockHandler(INfcUnlockHandler unlockHandler, in int[] techList);
+    void removeNfcUnlockHandler(INfcUnlockHandler unlockHandler);
+
+    void verifyNfcPermission();
 }

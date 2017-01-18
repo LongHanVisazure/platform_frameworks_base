@@ -16,11 +16,27 @@
 
 package android.service.notification;
 
+import android.service.notification.IStatusBarNotificationHolder;
 import android.service.notification.StatusBarNotification;
+import android.service.notification.NotificationRankingUpdate;
 
 /** @hide */
 oneway interface INotificationListener
 {
-    void onNotificationPosted(in StatusBarNotification notification);
-    void onNotificationRemoved(in StatusBarNotification notification);
+    // listeners and rankers
+    void onListenerConnected(in NotificationRankingUpdate update);
+    void onNotificationPosted(in IStatusBarNotificationHolder notificationHolder,
+            in NotificationRankingUpdate update);
+    void onNotificationRemoved(in IStatusBarNotificationHolder notificationHolder,
+            in NotificationRankingUpdate update);
+    void onNotificationRankingUpdate(in NotificationRankingUpdate update);
+    void onListenerHintsChanged(int hints);
+    void onInterruptionFilterChanged(int interruptionFilter);
+
+    // rankers only
+    void onNotificationEnqueued(in IStatusBarNotificationHolder notificationHolder, int importance, boolean user);
+    void onNotificationVisibilityChanged(String key, long time, boolean visible);
+    void onNotificationClick(String key, long time);
+    void onNotificationActionClick(String key, long time, int actionIndex);
+    void onNotificationRemovedReason(String key, long time, int reason);
 }

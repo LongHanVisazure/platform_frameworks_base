@@ -16,8 +16,6 @@
 
 package android.renderscript;
 
-import android.util.Log;
-
 /**
  * Intrinsic for applying a color matrix to allocations.
  *
@@ -208,7 +206,6 @@ public final class ScriptIntrinsicColorMatrix extends ScriptIntrinsic {
         setMatrix();
     }
 
-
     /**
      * Invoke the kernel and apply the matrix to each cell of input
      * {@link Allocation} and copy to the output {@link Allocation}.
@@ -225,6 +222,26 @@ public final class ScriptIntrinsicColorMatrix extends ScriptIntrinsic {
      * @param aout Output allocation
      */
     public void forEach(Allocation ain, Allocation aout) {
+        forEach(ain, aout, null);
+    }
+
+    /**
+     * Invoke the kernel and apply the matrix to each cell of input
+     * {@link Allocation} and copy to the output {@link Allocation}.
+     *
+     * If the vector size of the input is less than four, the
+     * remaining components are treated as zero for the matrix
+     * multiply.
+     *
+     * If the output vector size is less than four, the unused
+     * vector components are discarded.
+     *
+     *
+     * @param ain Input allocation
+     * @param aout Output allocation
+     * @param opt LaunchOptions for clipping
+     */
+    public void forEach(Allocation ain, Allocation aout, Script.LaunchOptions opt) {
         if (!ain.getElement().isCompatible(Element.U8(mRS)) &&
             !ain.getElement().isCompatible(Element.U8_2(mRS)) &&
             !ain.getElement().isCompatible(Element.U8_3(mRS)) &&
@@ -234,7 +251,7 @@ public final class ScriptIntrinsicColorMatrix extends ScriptIntrinsic {
             !ain.getElement().isCompatible(Element.F32_3(mRS)) &&
             !ain.getElement().isCompatible(Element.F32_4(mRS))) {
 
-            throw new RSIllegalArgumentException("Unsuported element type.");
+            throw new RSIllegalArgumentException("Unsupported element type.");
         }
 
         if (!aout.getElement().isCompatible(Element.U8(mRS)) &&
@@ -246,10 +263,10 @@ public final class ScriptIntrinsicColorMatrix extends ScriptIntrinsic {
             !aout.getElement().isCompatible(Element.F32_3(mRS)) &&
             !aout.getElement().isCompatible(Element.F32_4(mRS))) {
 
-            throw new RSIllegalArgumentException("Unsuported element type.");
+            throw new RSIllegalArgumentException("Unsupported element type.");
         }
 
-        forEach(0, ain, aout, null);
+        forEach(0, ain, aout, null, opt);
     }
 
     /**

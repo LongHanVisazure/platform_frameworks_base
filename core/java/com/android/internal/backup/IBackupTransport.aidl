@@ -16,6 +16,7 @@
 
 package com.android.internal.backup;
 
+import android.app.backup.RestoreDescription;
 import android.app.backup.RestoreSet;
 import android.content.Intent;
 import android.content.pm.PackageInfo;
@@ -54,6 +55,38 @@ interface IBackupTransport {
 	 *         sending data.  This method should not return null.
 	 */
 	String currentDestinationString();
+
+    /**
+     * Ask the transport for an Intent that can be used to launch a more detailed
+     * secondary data management activity.  For example, the configuration intent might
+     * be one for allowing the user to select which account they wish to associate
+     * their backups with, and the management intent might be one which presents a
+     * UI for managing the data on the backend.
+     *
+     * <p>In the Settings UI, the configuration intent will typically be invoked
+     * when the user taps on the preferences item labeled with the current
+     * destination string, and the management intent will be placed in an overflow
+     * menu labelled with the management label string.
+     *
+     * <p>If the transport does not supply any user-facing data management
+     * UI, then it should return {@code null} from this method.
+     *
+     * @return An intent that can be passed to Context.startActivity() in order to
+     *         launch the transport's data-management UI.  This method will return
+     *         {@code null} if the transport does not offer any user-facing data
+     *         management UI.
+     */
+    Intent dataManagementIntent();
+
+    /**
+     * On demand, supply a short string that can be shown to the user as the label
+     * on an overflow menu item used to invoked the data management UI.
+     *
+     * @return A string to be used as the label for the transport's data management
+     *         affordance.  If the transport supplies a data management intent, this
+     *         method must not return {@code null}.
+     */
+    String dataManagementLabel();
 
     /**
      * Ask the transport where, on local device storage, to keep backup state blobs.
@@ -100,19 +133,16 @@ interface IBackupTransport {
      *
      * @param packageInfo The identity of the application whose data is being backed up.
      *   This specifically includes the signature list for the package.
-     * @param data The data stream that resulted from invoking the application's
+     * @param inFd Descriptor of file with data that resulted from invoking the application's
      *   BackupService.doBackup() method.  This may be a pipe rather than a file on
      *   persistent media, so it may not be seekable.
-     * @param wipeAllFirst When true, <i>all</i> backed-up data for the current device/account
-     *   will be erased prior to the storage of the data provided here.  The purpose of this
-     *   is to provide a guarantee that no stale data exists in the restore set when the
-     *   device begins providing backups.
+     * @param flags Some of {@link BackupTransport#FLAG_USER_INITIATED}.
      * @return one of {@link BackupConstants#TRANSPORT_OK} (OK so far),
      *  {@link BackupConstants#TRANSPORT_ERROR} (on network error or other failure), or
      *  {@link BackupConstants#TRANSPORT_NOT_INITIALIZED} (if the backend dataset has
      *  become lost due to inactive expiry or some other reason and needs re-initializing)
      */
-    int performBackup(in PackageInfo packageInfo, in ParcelFileDescriptor inFd);
+    int performBackup(in PackageInfo packageInfo, in ParcelFileDescriptor inFd, int flags);
 
     /**
      * Erase the give application's data from the backup destination.  This clears
@@ -168,17 +198,30 @@ interface IBackupTransport {
     int startRestore(long token, in PackageInfo[] packages);
 
     /**
-     * Get the package name of the next application with data in the backup store.
-     * @return The name of one of the packages supplied to {@link #startRestore},
-     *   or "" (the empty string) if no more backup data is available,
-     *   or null if an error occurred (the restore should be aborted and rescheduled).
+     * Get the package name of the next application with data in the backup store, plus
+     * a description of the structure of the restored archive: either TYPE_KEY_VALUE for
+     * an original-API key/value dataset, or TYPE_FULL_STREAM for a tarball-type archive stream.
+     *
+     * <p>If the package name in the returned RestoreDescription object is the singleton
+     * {@link RestoreDescription#NO_MORE_PACKAGES}, it indicates that no further data is available
+     * in the current restore session: all packages described in startRestore() have been
+     * processed.
+     *
+     * <p>If this method returns {@code null}, it means that a transport-level error has
+     * occurred and the entire restore operation should be abandoned.
+     *
+     * @return A RestoreDescription object containing the name of one of the packages
+     *   supplied to {@link #startRestore} plus an indicator of the data type of that
+     *   restore data; or {@link RestoreDescription#NO_MORE_PACKAGES} to indicate that
+     *   no more packages can be restored in this session; or {@code null} to indicate
+     *   a transport-level error.
      */
-    String nextRestorePackage();
+    RestoreDescription nextRestorePackage();
 
     /**
      * Get the data for the application returned by {@link #nextRestorePackage}.
      * @param data An open, writable file into which the backup data should be stored.
-     * @return the same error codes as {@link #nextRestorePackage}.
+     * @return the same error codes as {@link #startRestore}.
      */
     int getRestoreData(in ParcelFileDescriptor outFd);
 
@@ -187,4 +230,80 @@ interface IBackupTransport {
      * freeing any resources and connections used during the restore process.
      */
     void finishRestore();
+
+    // full backup stuff
+
+    long requestFullBackupTime();
+    int performFullBackup(in PackageInfo targetPackage, in ParcelFileDescriptor socket, int flags);
+    int checkFullBackupSize(long size);
+    int sendBackupData(int numBytes);
+    void cancelFullBackup();
+
+    /**
+     * Ask the transport whether this app is eligible for backup.
+     *
+     * @param targetPackage The identity of the application.
+     * @param isFullBackup If set, transport should check if app is eligible for full data backup,
+     *   otherwise to check if eligible for key-value backup.
+     * @return Whether this app is eligible for backup.
+     */
+    boolean isAppEligibleForBackup(in PackageInfo targetPackage, boolean isFullBackup);
+
+    /**
+     * Ask the transport about current quota for backup size of the package.
+     *
+     * @param packageName ID of package to provide the quota.
+     * @param isFullBackup If set, transport should return limit for full data backup, otherwise
+     *                     for key-value backup.
+     * @return Current limit on full data backup size in bytes.
+     */
+    long getBackupQuota(String packageName, boolean isFullBackup);
+
+    // full restore stuff
+
+    /**
+     * Ask the transport to provide data for the "current" package being restored.  This
+     * is the package that was just reported by {@link #nextRestorePackage()} as having
+     * {@link RestoreDescription#TYPE_FULL_STREAM} data.
+     *
+     * The transport writes some data to the socket supplied to this call, and returns
+     * the number of bytes written.  The system will then read that many bytes and
+     * stream them to the application's agent for restore, then will call this method again
+     * to receive the next chunk of the archive.  This sequence will be repeated until the
+     * transport returns zero indicating that all of the package's data has been delivered
+     * (or returns a negative value indicating some sort of hard error condition at the
+     * transport level).
+     *
+     * <p>After this method returns zero, the system will then call
+     * {@link #getNextFullRestorePackage()} to begin the restore process for the next
+     * application, and the sequence begins again.
+     *
+     * <p>The transport should always close this socket when returning from this method.
+     * Do not cache this socket across multiple calls or you may leak file descriptors.
+     *
+     * @param socket The file descriptor that the transport will use for delivering the
+     *    streamed archive.  The transport must close this socket in all cases when returning
+     *    from this method.
+     * @return 0 when no more data for the current package is available.  A positive value
+     *    indicates the presence of that many bytes to be delivered to the app.  Any negative
+     *    return value is treated as equivalent to {@link BackupTransport#TRANSPORT_ERROR},
+     *    indicating a fatal error condition that precludes further restore operations
+     *    on the current dataset.
+     */
+    int getNextFullRestoreDataChunk(in ParcelFileDescriptor socket);
+
+    /**
+     * If the OS encounters an error while processing {@link RestoreDescription#TYPE_FULL_STREAM}
+     * data for restore, it will invoke this method to tell the transport that it should
+     * abandon the data download for the current package.  The OS will then either call
+     * {@link #nextRestorePackage()} again to move on to restoring the next package in the
+     * set being iterated over, or will call {@link #finishRestore()} to shut down the restore
+     * operation.
+     *
+     * @return {@link #TRANSPORT_OK} if the transport was successful in shutting down the
+     *    current stream cleanly, or {@link #TRANSPORT_ERROR} to indicate a serious
+     *    transport-level failure.  If the transport reports an error here, the entire restore
+     *    operation will immediately be finished with no further attempts to restore app data.
+     */
+    int abortFullRestore();
 }

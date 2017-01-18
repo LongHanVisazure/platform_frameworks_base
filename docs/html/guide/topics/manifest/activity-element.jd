@@ -5,13 +5,19 @@ parent.link=manifest-intro.html
 
 <dl class="xml">
 <dt>syntax:</dt>
-<dd><pre class="stx">&lt;activity android:<a href="#reparent">allowTaskReparenting</a>=["true" | "false"]
+<dd><pre class="stx">&lt;activity android:<a href="#embedded">allowEmbedded</a>=["true" | "false"]
+          android:<a href="#reparent">allowTaskReparenting</a>=["true" | "false"]
           android:<a href="#always">alwaysRetainTaskState</a>=["true" | "false"]
+          android:<a href="#autoremrecents">autoRemoveFromRecents</a>=["true" | "false"]
+          android:<a href="#banner">banner</a>="<i>drawable resource</i>"
           android:<a href="#clear">clearTaskOnLaunch</a>=["true" | "false"]
           android:<a href="#config">configChanges</a>=["mcc", "mnc", "locale",
                                  "touchscreen", "keyboard", "keyboardHidden",
-                                 "navigation", "screenLayout", "fontScale", "uiMode",
-                                 "orientation", "screenSize", "smallestScreenSize"]
+                                 "navigation", "screenLayout", "fontScale",
+                                 "uiMode", "orientation", "screenSize",
+                                 "smallestScreenSize"]
+          android:<a href="#dlmode">documentLaunchMode</a>=["intoExisting" | "always" |
+                                  "none" | "never"]
           android:<a href="#enabled">enabled</a>=["true" | "false"]
           android:<a href="#exclude">excludeFromRecents</a>=["true" | "false"]
           android:<a href="#exported">exported</a>=["true" | "false"]
@@ -19,14 +25,17 @@ parent.link=manifest-intro.html
           android:<a href="#hwaccel">hardwareAccelerated</a>=["true" | "false"]
           android:<a href="#icon">icon</a>="<i>drawable resource</i>"
           android:<a href="#label">label</a>="<i>string resource</i>"
-          android:<a href="#lmode">launchMode</a>=["multiple" | "singleTop" |
+          android:<a href="#lmode">launchMode</a>=["standard" | "singleTop" |
                               "singleTask" | "singleInstance"]
+          android:<a href="#maxRecents">maxRecents</a>="<i>integer</i>"
           android:<a href="#multi">multiprocess</a>=["true" | "false"]
           android:<a href="#nm">name</a>="<i>string</i>"
           android:<a href="#nohist">noHistory</a>=["true" | "false"]  <!-- ##api level 3## -->
           android:<a href="#parent">parentActivityName</a>="<i>string</i>" <!-- api level 16 -->
           android:<a href="#prmsn">permission</a>="<i>string</i>"
           android:<a href="#proc">process</a>="<i>string</i>"
+          android:<a href="#relinquish">relinquishTaskIdentity</a>=["true" | "false"]
+          android:<a href="#resizeableActivity">resizeableActivity</a>=["true" | "false"]
           android:<a href="#screen">screenOrientation</a>=["unspecified" | "behind" |
                                      "landscape" | "portrait" |
                                      "reverseLandscape" | "reversePortrait" |
@@ -35,6 +44,7 @@ parent.link=manifest-intro.html
                                      "sensor" | "fullSensor" | "nosensor" |
                                      "user" | "fullUser" | "locked"]
           android:<a href="#state">stateNotNeeded</a>=["true" | "false"]
+          android:<a href="#supportsPIP">supportsPictureInPicture</a>=["true" | "false"]
           android:<a href="#aff">taskAffinity</a>="<i>string</i>"
           android:<a href="#theme">theme</a>="<i>resource or theme</i>"
           android:<a href="#uioptions">uiOptions</a>=["none" | "splitActionBarWhenNarrow"]
@@ -54,14 +64,25 @@ parent.link=manifest-intro.html
 <br/><code><a href="{@docRoot}guide/topics/manifest/meta-data-element.html">&lt;meta-data&gt;</a></code></dd>
 
 <dt>description:</dt>
-<dd>Declares an activity (an {@link android.app.Activity} subclass) that
+<dd itemprop="description">Declares an activity (an {@link android.app.Activity} subclass) that
 implements part of the application's visual user interface.  All activities
-must be represented by {@code &lt;activity&gt;}
+must be represented by {@code <activity>}
 elements in the manifest file.  Any that are not declared there will not be seen
 by the system and will never be run.
 
 <dt>attributes:</dt>
 <dd><dl class="attr">
+<dt><a name="embedded"></a>{@code android:allowEmbedded}</dt>
+<dd>
+    Indicate that the activity can be launched as the embedded child of another
+    activity. Particularly in the case where the child lives in a container
+    such as a Display owned by another activity. For example, activities
+    that are used for Wear custom notifications must declare this so
+    Wear can display the activity in it's context stream, which resides
+    in another process.
+
+    <p>The default value of this attribute is <code>false</code>.
+</dd>
 <dt><a name="reparent"></a>{@code android:allowTaskReparenting}</dt>
 <dd>Whether or not the activity can move from the task that started it to
 the task it has an affinity for when that task is next brought to the
@@ -127,6 +148,38 @@ useful, for example, in an application like the web browser where there is
 a lot of state (such as multiple open tabs) that users would not like to lose.
 </p></dd>
 
+<dt><a name="autoremrecents"></a>{@code android:autoRemoveFromRecents}</dt>
+<dd>Whether or not tasks launched by activities with this attribute remains in the
+<a href="{@docRoot}guide/components/recents.html">overview screen</a> until the last activity in the
+task is completed. If {@code true}, the task is
+automatically removed from the overview screen. This overrides the caller's use of
+{@link android.content.Intent#FLAG_ACTIVITY_RETAIN_IN_RECENTS}. It must be a boolean value, either
+"{@code true}" or "{@code false}".</dd>
+
+
+<dt><a name="banner"></a>{@code android:banner}</dt>
+<dd>A <a href="{@docRoot}guide/topics/resources/drawable-resource.html">drawable resource</a>
+providing an extended graphical banner for its associated item. Use with the
+{@code <activity>} tag to supply a default banner for a specific activity, or with the
+<a href="{@docRoot}guide/topics/manifest/application-element.html"><code>&lt;application&gt;</code></a>
+tag to supply a banner for all application activities.
+
+<p>The system uses the banner to represent an app in
+the Android TV home screen. Since the banner is displayed only in the home screen, it
+should only be specified by applications with an activity that handles the
+{@link android.content.Intent#CATEGORY_LEANBACK_LAUNCHER} intent.</p>
+
+<p>This attribute must be set as a reference to a drawable resource containing
+the image (for example {@code "@drawable/banner"}). There is no default banner.
+</p>
+
+<p>
+See <a href="{@docRoot}design/tv/patterns.html#banner">
+Banners</a> in the UI Patterns for TV design guide, and <a href="{@docRoot}training/tv/start/start.html#banner">
+Provide a home screen banner</a> in Get Started with TV Apps for more information.
+</p></dd>
+
+
 <dt><a name="clear"></a>{@code android:clearTaskOnLaunch}</dt>
 <dd>Whether or not all activities will be removed from the task, except for
 the root activity, whenever it is re-launched from the home screen &mdash;
@@ -165,7 +218,7 @@ as described above.
 <dd>Lists configuration changes that the activity will handle itself.  When a configuration
 change occurs at runtime, the activity is shut down and restarted by default, but declaring a
 configuration with this attribute will prevent the activity from being restarted. Instead, the
-activity remains running and its <code>{@link android.app.Activity#onConfigurationChanged
+activity remains running and its <code>{@link android.app.Activity#onConfigurationChanged(android.content.res.Configuration)
 onConfigurationChanged()}</code> method is called.
 
 <p class="note"><strong>Note:</strong> Using this attribute should be
@@ -259,33 +312,81 @@ restart your activity, even when running on an Android 3.2 or higher device).
 
 <p>
 All of these configuration changes can impact the resource values seen by the
-application.  Therefore, when <code>{@link android.app.Activity#onConfigurationChanged
+application.  Therefore, when <code>{@link android.app.Activity#onConfigurationChanged(android.content.res.Configuration)
 onConfigurationChanged()}</code> is called, it will generally be necessary to again
 retrieve all resources (including view layouts, drawables, and so on) to correctly
 handle the change.
 </p></dd>
 
+<dt><a name="dlmode"></a>{@code android:documentLaunchMode}</dt>
+<dd>Specifies how a new instance of an activity should be added to a task each time it is
+launched. This attribute permits the user to have multiple documents from the same application
+appear in the <a href="{@docRoot}guide/components/recents.html">overview screen</a>.
+
+<p>This attribute has four values which produce the following effects when the user opens a document
+with the application:</p>
+
+<table>
+<tr>
+  <th>Value</th>
+  <th>Description</th>
+</tr><tr>
+  <td>"{@code intoExisting}"</td>
+  <td>The activity reuses the existing task for the document. Using this value is the same as setting
+  the {@link android.content.Intent#FLAG_ACTIVITY_NEW_DOCUMENT} flag, <em>without</em> setting the
+  {@link android.content.Intent#FLAG_ACTIVITY_MULTIPLE_TASK} flag, as described in
+  <a href="{@docRoot}guide/components/recents.html#flag-new-doc">Using the Intent flag to add a task
+  </a>.</td>
+</tr><tr>
+    <td>"{@code always}"</td>
+    <td>The activity creates a new task for the document, even if the document is already opened.
+    This is the same as setting both the {@link android.content.Intent#FLAG_ACTIVITY_NEW_DOCUMENT}
+    and {@link android.content.Intent#FLAG_ACTIVITY_MULTIPLE_TASK} flags.</td>
+</tr><tr>
+    <td>"{@code none}"</td>
+    <td>The activity does not create a new task for the activity. This is the default value, which
+    creates a new task only when {@link android.content.Intent#FLAG_ACTIVITY_NEW_TASK} is set.
+    The overview screen treats the activity as it would by default: it displays a single task for
+    the app, which resumes from whatever activity the user last invoked.</td>
+</tr><tr>
+    <td>"{@code never}"</td>
+    <td>This activity is not launched into a new document even if the Intent contains
+    {@link android.content.Intent#FLAG_ACTIVITY_NEW_DOCUMENT}. Setting this overrides the behavior
+    of the {@link android.content.Intent#FLAG_ACTIVITY_NEW_DOCUMENT} and
+    {@link android.content.Intent#FLAG_ACTIVITY_MULTIPLE_TASK} flags, if either of these are set in
+    the activity, and the overview screen displays a single task for the app, which resumes from
+    whatever activity the user last invoked.</td>
+</tr>
+</table>
+
+<p class="note"><strong>Note:</strong> For values other than "{@code none}" and "{@code never}" the
+activity must be defined with {@code launchMode="standard"}. If this attribute is not specified,
+{@code documentLaunchMode="none"} is used.</p>
+</dd>
+
 <dt><a name="enabled"></a>{@code android:enabled}</dt>
 <dd>Whether or not the activity can be instantiated by the system &mdash;
-"{@code true}" if it can be, and "{@code false}" if not.  The default value
+{@code "true"} if it can be, and "{@code false}" if not.  The default value
 is "{@code true}".
 
 <p>
-The <code><a href="{@docRoot}guide/topics/manifest/application-element.html">&lt;application&gt;</a></code> element has its own
-<code><a href="{@docRoot}guide/topics/manifest/application-element.html#enabled">enabled</a></code>
+The <code><a href="{@docRoot}guide/topics/manifest/application-element.html">&lt;application&gt;</a>
+</code> element has its own<code>
+<a href="{@docRoot}guide/topics/manifest/application-element.html#enabled">enabled</a></code>
 attribute that applies to all application components, including activities.  The
 <code><a href="{@docRoot}guide/topics/manifest/application-element.html">&lt;application&gt;</a></code>
-and {@code &lt;activity&gt;} attributes must both be "{@code true}" (as they both
+and {@code <activity>} attributes must both be "{@code true}" (as they both
 are by default) for the system to be able to instantiate the activity.  If either
 is "{@code false}", it cannot be instantiated.
 </p></dd>
 
 <dt><a name="exclude"></a>{@code android:excludeFromRecents}</dt>
 <dd>Whether or not the task initiated by this activity should be excluded from the list of recently
-used applications ("recent apps"). That is, when this activity is the root activity of a new task,
-this attribute determines whether the task should not appear in the list of recent apps. Set "{@code
-true}" if the task should be <em>excluded</em> from the list; set "{@code false}" if it should be
-<em>included</em>. The default value is "{@code false}".
+used applications, the <a href="{@docRoot}guide/components/recents.html">
+overview screen</a>. That is, when this activity is the root activity of a new
+task, this attribute determines whether the task should not appear in the list of recent apps. Set
+"{@code true}" if the task should be <em>excluded</em> from the list; set "{@code false}" if it
+should be <em>included</em>. The default value is "{@code false}".
 </p></dd>
 
 <dt><a name="exported"></a>{@code android:exported}</dt>
@@ -441,13 +542,29 @@ Similarly, a new instance of a "{@code singleTop}" activity may also be
 created to handle a new intent.  However, if the target task already has an
 existing instance of the activity at the top of its stack, that instance
 will receive the new intent (in an
-<code>{@link android.app.Activity#onNewIntent onNewIntent()}</code> call);
+{@link android.app.Activity#onNewIntent onNewIntent()} call);
 a new instance is not created.
 In other circumstances &mdash; for example, if an existing instance of the
 "{@code singleTop}" activity is in the target task, but not at the top of
 the stack, or if it's at the top of a stack, but not in the target task
 &mdash; a new instance would be created and pushed on the stack.
 </p>
+
+<p>Similarly, if you
+<a href="{@docRoot}training/implementing-navigation/ancestral.html">navigate
+up</a> to an activity on the current stack, the behavior is determined by the
+parent activity's launch mode. If the parent activity has launch mode {@code
+singleTop} (or the <code>up</code> intent contains {@link
+android.content.Intent#FLAG_ACTIVITY_CLEAR_TOP}), the parent is brought to the
+top of the stack, and its state is preserved. The navigation intent is received
+by the parent activity's {@link android.app.Activity#onNewIntent onNewIntent()}
+method.  If the parent activity has launch mode {@code standard} (and the
+<code>up</code> intent does not contain {@link
+android.content.Intent#FLAG_ACTIVITY_CLEAR_TOP}), the current activity and its
+parent are both popped off the stack, and a new instance of the parent activity
+is created to receive the navigation intent.
+</p>
+
 
 <p>
 The "{@code singleTask}" and "{@code singleInstance}" modes also differ from
@@ -522,6 +639,13 @@ document.
 </p>
 </dd>
 
+<dt><a name="maxrecents"></a>{@code android:maxRecents}</dt>
+<dd>The maximum number of tasks rooted at this activity in the <a href="{@docRoot}guide/components/recents.html">
+overview screen</a>. When this number of entries is reached, the system removes the least-recently
+used instance from the overview screen. Valid values are 1 through 50 (25 on low memory devices);
+zero is invalid. This must be an integer value, such as 50. The default value is 16.
+</dd>
+
 <dt><a name="multi"></a>{@code android:multiprocess}</dt>
 <dd>Whether an instance of the activity can be launched into the process of the component
 that started it &mdash; "{@code true}" if it can be, and "{@code false}" if not.
@@ -565,7 +689,9 @@ visible on screen &mdash; "{@code true}" if it should be finished, and
 <p>
 A value of "{@code true}" means that the activity will not leave a
 historical trace.  It will not remain in the activity stack for the task,
-so the user will not be able to return to it.
+so the user will not be able to return to it. In this case,
+{@link android.app.Activity#onActivityResult onActivityResult()} is never called if you
+start another activity for a result from this activity.
 </p>
 
 <p>
@@ -576,7 +702,7 @@ This attribute was introduced in API Level 3.
 <!-- api level 16 -->
 <dt><a name="parent"></a>{@code android:parentActivityName}</dt>
 <dd>The class name of the logical parent of the activity. The name here must match the class
-  name given to the corresponding {@code &lt;activity>} element's
+  name given to the corresponding {@code <activity>} element's
   <a href="#nm"><code>android:name</code></a> attribute.
 
 <p>The system reads this attribute to determine which activity should be started when
@@ -584,13 +710,13 @@ This attribute was introduced in API Level 3.
   synthesize a back stack of activities with {@link android.app.TaskStackBuilder}.</p>
 
 <p>To support API levels 4 - 16, you can also declare the parent activity with a {@code
-&lt;meta-data>} element that specifies a value for {@code "android.support.PARENT_ACTIVITY"}.
+<meta-data>} element that specifies a value for {@code "android.support.PARENT_ACTIVITY"}.
 For example:</p>
 <pre>
 &lt;activity
     android:name="com.example.app.ChildActivity"
     android:label="@string/title_child_activity"
-    android:parentActivityName="com.example.myfirstapp.MainActivity" >
+    android:parentActivityName="com.example.app.MainActivity" >
     &lt;!-- Parent activity meta-data to support API level 4+ -->
     &lt;meta-data
         android:name="android.support.PARENT_ACTIVITY"
@@ -657,8 +783,52 @@ resource usage.
 attribute can set a different default process name for all components.
 </dd>
 
+<dt><a name="relinquish"></a>{@code android:relinquishTaskIdentity}</dt>
+<dd>Whether or not the activity relinquishes its task identifiers to an activity above it in the
+task stack. A task whose root activity has this attribute set to "{@code true}" replaces the base
+Intent with that of the next activity in the task. If the next activity also has this attribute set
+to "{@code true}" then it will yield the base Intent to any activity that it launches in the same
+task. This continues for each activity until an activity is encountered which has this attribute set
+to "{@code false}". The default value is "{@code false}".
+
+<p>This attribute set to "{@code true}" also permits the activity's use of the
+{@link android.app.ActivityManager.TaskDescription} to change labels, colors
+and icons in the <a href="{@docRoot}guide/components/recents.html">overview screen</a>.</p>
+</dd>
+
+<dt id="resizeableActivity"><code>resizeableActivity</code></dt>
+
+<dd>
+<p>
+  Specifies whether the app supports <a href=
+  "{@docRoot}guide/topics/ui/multi-window.html">multi-window display</a>. You
+  can set this attribute in either the <code>&lt;activity&gt;</code> or
+  <a href="application-element.html"><code>&lt;application&gt;</code></a>
+  element.
+</p>
+
+<p>
+  If you set this attribute to true, the user can launch the activity in
+  split-screen and freeform modes. If you set the attribute to false, the
+  activity does not support multi-window mode. If this value is false, and the
+  user attempts to launch the activity in multi-window mode, the activity takes
+  over the full screen.
+</p>
+
+<p>
+  If your app targets API level 24 or higher, but you do not specify a value
+  for this attribute, the attribute's value defaults to true.
+</p>
+
+<p>
+  This attribute was added in API level 24.
+</p>
+</dd>
+
 <dt><a name="screen"></a>{@code android:screenOrientation}</dt>
-<dd>The orientation of the activity's display on the device.
+<dd>The orientation of the activity's display on the device. The system ignores
+  this attribute if the activity is running in <a
+  href="{@docRoot}guide/topics/ui/multi-window.html">multi-window mode</a>.
 
 <p>The value can be any one of the following strings:</p>
 
@@ -750,7 +920,7 @@ example, if you declare either {@code "landscape"}, {@code "reverseLandscape"}, 
 {@code "sensorLandscape"}, then your application will be available only to devices that support
 landscape orientation. However, you should also explicitly declare that
 your application requires either portrait or landscape orientation with the <a
-href="{@docRoot}guide/topics/manifest/uses-feature-element.html">{@code &lt;uses-feature&gt;}</a>
+href="{@docRoot}guide/topics/manifest/uses-feature-element.html">{@code <uses-feature>}</a>
 element. For example, <code>&lt;uses-feature
 android:name="android.hardware.screen.portrait"/></code>. This is purely a filtering behavior
 provided by Google Play (and other services that support it) and the platform itself does not
@@ -782,6 +952,19 @@ absence of retained state.  For example, the activity that displays the
 home screen uses this setting to make sure that it does not get removed if it
 crashes for some reason.
 </p></dd>
+
+<dt id="supportsPIP"><code>supportsPictureInPicture</code></dt>
+
+<dd>
+<p>
+  Specifies whether the activity supports <a href=
+  "{@docRoot}training/tv/playback/picture-in-picture.jd">Picture-in-Picture</a>
+  display. The system ignores this attribute if <a href=
+  "#resizeableActivity"><code>android:resizeableActivity</code></a> is false.
+</p>
+
+<p>This attribute was added in API level 24.</p>
+</dd>
 
 <dt><a name="aff"></a>{@code android:taskAffinity}</dt>
 <dd>The task that the activity has an affinity for.  Activities with
@@ -844,16 +1027,17 @@ href="{@docRoot}guide/topics/ui/themes.html">Styles and Themes</a> developer gui
     <tr><th>Value</th><th>Description</th></tr>
     <tr><td>{@code "none"}</td><td>No extra UI options. This is the default.</td></tr>
     <tr><td>{@code "splitActionBarWhenNarrow"}</td><td>Add a bar at
-the bottom of the screen to display action items in the {@link android.app.ActionBar}, when
+the bottom of the screen to display action items in the <em>app bar</em> (also known as the
+<em>action bar</em>), when
 constrained for horizontal space (such as when in portrait mode on a handset). Instead of a small
-number of action items appearing in the action bar at the top of the screen, the action bar is
+number of action items appearing in the app bar at the top of the screen, the app bar is
 split into the top navigation section and the bottom bar for action items. This ensures a reasonable
 amount of space is made available not only for the action items, but also for navigation and title
 elements at the top. Menu items are not split across the two bars; they always appear
 together.</td></tr>
   </table>
-  <p>For more information about the action bar, see the <a
-href="{@docRoot}guide/topics/ui/actionbar.html">Action Bar</a> developer guide.</p>
+  <p>For more information about the app bar, see the <a
+href="{@docRoot}training/appbar/index.html">Adding the App Bar</a> training class.</p>
   <p>This attribute was added in API level 14.</p>
 </dd>
 

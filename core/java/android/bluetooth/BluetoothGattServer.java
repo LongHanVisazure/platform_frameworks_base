@@ -19,18 +19,9 @@ package android.bluetooth;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothProfile;
-import android.bluetooth.BluetoothProfile.ServiceListener;
-import android.bluetooth.IBluetoothManager;
-import android.bluetooth.IBluetoothStateChangeCallback;
-
-import android.content.ComponentName;
 import android.content.Context;
-import android.content.Intent;
-import android.content.ServiceConnection;
-import android.os.IBinder;
 import android.os.ParcelUuid;
 import android.os.RemoteException;
-import android.os.ServiceManager;
 import android.util.Log;
 
 import java.util.ArrayList;
@@ -41,24 +32,26 @@ import java.util.UUID;
  * Public API for the Bluetooth GATT Profile server role.
  *
  * <p>This class provides Bluetooth GATT server role functionality,
- * allowing applications to create and advertise Bluetooth Smart services
- * and characteristics.
+ * allowing applications to create Bluetooth Smart services and
+ * characteristics.
  *
  * <p>BluetoothGattServer is a proxy object for controlling the Bluetooth Service
- * via IPC.  Use {@link BluetoothAdapter#getProfileProxy} to get the
- * BluetoothGatt proxy object.
+ * via IPC.  Use {@link BluetoothManager#openGattServer} to get an instance
+ * of this class.
  */
 public final class BluetoothGattServer implements BluetoothProfile {
     private static final String TAG = "BluetoothGattServer";
     private static final boolean DBG = true;
+    private static final boolean VDBG = false;
 
-    private final Context mContext;
     private BluetoothAdapter mAdapter;
     private IBluetoothGatt mService;
     private BluetoothGattServerCallback mCallback;
 
     private Object mServerIfLock = new Object();
     private int mServerIf;
+    private int mTransport;
+    private BluetoothGattService mPendingService;
     private List<BluetoothGattService> mServices;
 
     private static final int CALLBACK_REG_TIMEOUT = 10000;
@@ -91,7 +84,7 @@ public final class BluetoothGattServer implements BluetoothProfile {
              * @hide
              */
             public void onScanResult(String address, int rssi, byte[] advData) {
-                if (DBG) Log.d(TAG, "onScanResult() - Device=" + address + " RSSI=" +rssi);
+                if (VDBG) Log.d(TAG, "onScanResult() - Device=" + address + " RSSI=" +rssi);
                 // no op
             }
 
@@ -116,17 +109,37 @@ public final class BluetoothGattServer implements BluetoothProfile {
              * Service has been added
              * @hide
              */
-            public void onServiceAdded(int status, int srvcType,
-                                       int srvcInstId, ParcelUuid srvcId) {
-                UUID srvcUuid = srvcId.getUuid();
-                if (DBG) Log.d(TAG, "onServiceAdded() - service=" + srvcUuid
-                    + "status=" + status);
+            public void onServiceAdded(int status, BluetoothGattService service) {
+                if (DBG) Log.d(TAG, "onServiceAdded() - handle=" + service.getInstanceId()
+                    + " uuid=" + service.getUuid() + " status=" + status);
 
-                BluetoothGattService service = getService(srvcUuid, srvcInstId, srvcType);
-                if (service == null) return;
+                if (mPendingService == null)
+                    return;
+
+                BluetoothGattService tmp = mPendingService;
+                mPendingService = null;
+
+                // Rewrite newly assigned handles to existing service.
+                tmp.setInstanceId(service.getInstanceId());
+                List<BluetoothGattCharacteristic> temp_chars = tmp.getCharacteristics();
+                List<BluetoothGattCharacteristic> svc_chars = service.getCharacteristics();
+                for (int i=0; i<svc_chars.size(); i++) {
+                    BluetoothGattCharacteristic temp_char = temp_chars.get(i);
+                    BluetoothGattCharacteristic svc_char = svc_chars.get(i);
+
+                    temp_char.setInstanceId(svc_char.getInstanceId());
+
+                    List<BluetoothGattDescriptor> temp_descs = temp_char.getDescriptors();
+                    List<BluetoothGattDescriptor> svc_descs = svc_char.getDescriptors();
+                    for (int j=0; j<svc_descs.size(); j++) {
+                        temp_descs.get(j).setInstanceId(svc_descs.get(j).getInstanceId());
+                    }
+                }
+
+                mServices.add(tmp);
 
                 try {
-                    mCallback.onServiceAdded((int)status, service);
+                    mCallback.onServiceAdded((int)status, tmp);
                 } catch (Exception ex) {
                     Log.w(TAG, "Unhandled exception in callback", ex);
                 }
@@ -137,19 +150,15 @@ public final class BluetoothGattServer implements BluetoothProfile {
              * @hide
              */
             public void onCharacteristicReadRequest(String address, int transId,
-                            int offset, boolean isLong, int srvcType, int srvcInstId,
-                            ParcelUuid srvcId, int charInstId, ParcelUuid charId) {
-                UUID srvcUuid = srvcId.getUuid();
-                UUID charUuid = charId.getUuid();
-                if (DBG) Log.d(TAG, "onCharacteristicReadRequest() - "
-                    + "service=" + srvcUuid + ", characteristic=" + charUuid);
+                            int offset, boolean isLong, int handle) {
+                if (VDBG) Log.d(TAG, "onCharacteristicReadRequest() - handle=" + handle);
 
                 BluetoothDevice device = mAdapter.getRemoteDevice(address);
-                BluetoothGattService service = getService(srvcUuid, srvcInstId, srvcType);
-                if (service == null) return;
-
-                BluetoothGattCharacteristic characteristic = service.getCharacteristic(charUuid);
-                if (characteristic == null) return;
+                BluetoothGattCharacteristic characteristic = getCharacteristicByHandle(handle);
+                if (characteristic == null) {
+                    Log.w(TAG, "onCharacteristicReadRequest() no char for handle " + handle);
+                    return;
+                }
 
                 try {
                     mCallback.onCharacteristicReadRequest(device, transId, offset, characteristic);
@@ -163,25 +172,15 @@ public final class BluetoothGattServer implements BluetoothProfile {
              * @hide
              */
             public void onDescriptorReadRequest(String address, int transId,
-                            int offset, boolean isLong, int srvcType, int srvcInstId,
-                            ParcelUuid srvcId, int charInstId, ParcelUuid charId,
-                            ParcelUuid descrId) {
-                UUID srvcUuid = srvcId.getUuid();
-                UUID charUuid = charId.getUuid();
-                UUID descrUuid = descrId.getUuid();
-                if (DBG) Log.d(TAG, "onCharacteristicReadRequest() - "
-                    + "service=" + srvcUuid + ", characteristic=" + charUuid
-                    + "descriptor=" + descrUuid);
+                            int offset, boolean isLong, int handle) {
+                if (VDBG) Log.d(TAG, "onCharacteristicReadRequest() - handle=" + handle);
 
                 BluetoothDevice device = mAdapter.getRemoteDevice(address);
-                BluetoothGattService service = getService(srvcUuid, srvcInstId, srvcType);
-                if (service == null) return;
-
-                BluetoothGattCharacteristic characteristic = service.getCharacteristic(charUuid);
-                if (characteristic == null) return;
-
-                BluetoothGattDescriptor descriptor = characteristic.getDescriptor(descrUuid);
-                if (descriptor == null) return;
+                BluetoothGattDescriptor descriptor = getDescriptorByHandle(handle);
+                if (descriptor == null) {
+                    Log.w(TAG, "onDescriptorReadRequest() no desc for handle " + handle);
+                    return;
+                }
 
                 try {
                     mCallback.onDescriptorReadRequest(device, transId, offset, descriptor);
@@ -196,19 +195,15 @@ public final class BluetoothGattServer implements BluetoothProfile {
              */
             public void onCharacteristicWriteRequest(String address, int transId,
                             int offset, int length, boolean isPrep, boolean needRsp,
-                            int srvcType, int srvcInstId, ParcelUuid srvcId,
-                            int charInstId, ParcelUuid charId, byte[] value) {
-                UUID srvcUuid = srvcId.getUuid();
-                UUID charUuid = charId.getUuid();
-                if (DBG) Log.d(TAG, "onCharacteristicWriteRequest() - "
-                    + "service=" + srvcUuid + ", characteristic=" + charUuid);
+                            int handle, byte[] value) {
+                if (VDBG) Log.d(TAG, "onCharacteristicWriteRequest() - handle=" + handle);
 
                 BluetoothDevice device = mAdapter.getRemoteDevice(address);
-                BluetoothGattService service = getService(srvcUuid, srvcInstId, srvcType);
-                if (service == null) return;
-
-                BluetoothGattCharacteristic characteristic = service.getCharacteristic(charUuid);
-                if (characteristic == null) return;
+                BluetoothGattCharacteristic characteristic = getCharacteristicByHandle(handle);
+                if (characteristic == null) {
+                    Log.w(TAG, "onCharacteristicWriteRequest() no char for handle " + handle);
+                    return;
+                }
 
                 try {
                     mCallback.onCharacteristicWriteRequest(device, transId, characteristic,
@@ -223,28 +218,16 @@ public final class BluetoothGattServer implements BluetoothProfile {
              * Remote client descriptor write request.
              * @hide
              */
-            public void onDescriptorWriteRequest(String address, int transId,
-                            int offset, int length, boolean isPrep, boolean needRsp,
-                            int srvcType, int srvcInstId, ParcelUuid srvcId,
-                            int charInstId, ParcelUuid charId, ParcelUuid descrId,
-                            byte[] value) {
-                UUID srvcUuid = srvcId.getUuid();
-                UUID charUuid = charId.getUuid();
-                UUID descrUuid = descrId.getUuid();
-                if (DBG) Log.d(TAG, "onDescriptorWriteRequest() - "
-                    + "service=" + srvcUuid + ", characteristic=" + charUuid
-                    + "descriptor=" + descrUuid);
+            public void onDescriptorWriteRequest(String address, int transId, int offset,
+                            int length, boolean isPrep, boolean needRsp, int handle, byte[] value) {
+                if (VDBG) Log.d(TAG, "onDescriptorWriteRequest() - handle=" + handle);
 
                 BluetoothDevice device = mAdapter.getRemoteDevice(address);
-
-                BluetoothGattService service = getService(srvcUuid, srvcInstId, srvcType);
-                if (service == null) return;
-
-                BluetoothGattCharacteristic characteristic = service.getCharacteristic(charUuid);
-                if (characteristic == null) return;
-
-                BluetoothGattDescriptor descriptor = characteristic.getDescriptor(descrUuid);
-                if (descriptor == null) return;
+                BluetoothGattDescriptor descriptor = getDescriptorByHandle(handle);
+                if (descriptor == null) {
+                    Log.w(TAG, "onDescriptorWriteRequest() no desc for handle " + handle);
+                    return;
+                }
 
                 try {
                     mCallback.onDescriptorWriteRequest(device, transId, descriptor,
@@ -273,18 +256,84 @@ public final class BluetoothGattServer implements BluetoothProfile {
                     Log.w(TAG, "Unhandled exception in callback", ex);
                 }
             }
+
+            /**
+             * A notification/indication has been sent.
+             * @hide
+             */
+            public void onNotificationSent(String address, int status) {
+                if (VDBG) Log.d(TAG, "onNotificationSent() - "
+                    + "device=" + address + ", status=" + status);
+
+                BluetoothDevice device = mAdapter.getRemoteDevice(address);
+                if (device == null) return;
+
+                try {
+                    mCallback.onNotificationSent(device, status);
+                } catch (Exception ex) {
+                    Log.w(TAG, "Unhandled exception: " + ex);
+                }
+            }
+
+            /**
+             * The MTU for a connection has changed
+             * @hide
+             */
+            public void onMtuChanged(String address, int mtu) {
+                if (DBG) Log.d(TAG, "onMtuChanged() - "
+                    + "device=" + address + ", mtu=" + mtu);
+
+                BluetoothDevice device = mAdapter.getRemoteDevice(address);
+                if (device == null) return;
+
+                try {
+                    mCallback.onMtuChanged(device, mtu);
+                } catch (Exception ex) {
+                    Log.w(TAG, "Unhandled exception: " + ex);
+                }
+            }
         };
 
     /**
      * Create a BluetoothGattServer proxy object.
      */
-    /*package*/ BluetoothGattServer(Context context, IBluetoothGatt iGatt) {
-        mContext = context;
+    /*package*/ BluetoothGattServer(IBluetoothGatt iGatt, int transport) {
         mService = iGatt;
         mAdapter = BluetoothAdapter.getDefaultAdapter();
         mCallback = null;
         mServerIf = 0;
+        mTransport = transport;
         mServices = new ArrayList<BluetoothGattService>();
+    }
+
+    /**
+     * Returns a characteristic with given handle.
+     * @hide
+     */
+    /*package*/ BluetoothGattCharacteristic getCharacteristicByHandle(int handle) {
+        for(BluetoothGattService svc : mServices) {
+            for(BluetoothGattCharacteristic charac : svc.getCharacteristics()) {
+                if (charac.getInstanceId() == handle)
+                    return charac;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Returns a descriptor with given handle.
+     * @hide
+     */
+    /*package*/ BluetoothGattDescriptor getDescriptorByHandle(int handle) {
+        for(BluetoothGattService svc : mServices) {
+            for(BluetoothGattCharacteristic charac : svc.getCharacteristics()) {
+                for(BluetoothGattDescriptor desc : charac.getDescriptors()) {
+                    if (desc.getInstanceId() == handle)
+                        return desc;
+                }
+            }
+        }
+        return null;
     }
 
     /**
@@ -410,7 +459,7 @@ public final class BluetoothGattServer implements BluetoothProfile {
 
         try {
             mService.serverConnect(mServerIf, device.getAddress(),
-                               autoConnect ? false : true); // autoConnect is inverse of "isDirect"
+                               autoConnect ? false : true,mTransport); // autoConnect is inverse of "isDirect"
         } catch (RemoteException e) {
             Log.e(TAG,"",e);
             return false;
@@ -461,7 +510,7 @@ public final class BluetoothGattServer implements BluetoothProfile {
      */
     public boolean sendResponse(BluetoothDevice device, int requestId,
                                 int status, int offset, byte[] value) {
-        if (DBG) Log.d(TAG, "sendResponse() - device: " + device.getAddress());
+        if (VDBG) Log.d(TAG, "sendResponse() - device: " + device.getAddress());
         if (mService == null || mServerIf == 0) return false;
 
         try {
@@ -489,21 +538,25 @@ public final class BluetoothGattServer implements BluetoothProfile {
      * @param characteristic The local characteristic that has been updated
      * @param confirm true to request confirmation from the client (indication),
      *                false to send a notification
+     * @throws IllegalArgumentException
      * @return true, if the notification has been triggered successfully
      */
     public boolean notifyCharacteristicChanged(BluetoothDevice device,
                     BluetoothGattCharacteristic characteristic, boolean confirm) {
-        if (DBG) Log.d(TAG, "notifyCharacteristicChanged() - device: " + device.getAddress());
+        if (VDBG) Log.d(TAG, "notifyCharacteristicChanged() - device: " + device.getAddress());
         if (mService == null || mServerIf == 0) return false;
 
         BluetoothGattService service = characteristic.getService();
         if (service == null) return false;
 
+        if (characteristic.getValue() == null) {
+            throw new IllegalArgumentException("Chracteristic value is empty. Use "
+                    + "BluetoothGattCharacteristic#setvalue to update");
+        }
+
         try {
             mService.sendNotification(mServerIf, device.getAddress(),
-                    service.getType(), service.getInstanceId(),
-                    new ParcelUuid(service.getUuid()), characteristic.getInstanceId(),
-                    new ParcelUuid(characteristic.getUuid()), confirm,
+                    characteristic.getInstanceId(), confirm,
                     characteristic.getValue());
         } catch (RemoteException e) {
             Log.e(TAG,"",e);
@@ -516,7 +569,7 @@ public final class BluetoothGattServer implements BluetoothProfile {
     /**
      * Add a service to the list of services to be hosted.
      *
-     * <p>Once a service has been addded to the the list, the service and it's
+     * <p>Once a service has been addded to the the list, the service and its
      * included characteristics will be provided by the local device.
      *
      * <p>If the local device has already exposed services when this function
@@ -532,39 +585,10 @@ public final class BluetoothGattServer implements BluetoothProfile {
         if (DBG) Log.d(TAG, "addService() - service: " + service.getUuid());
         if (mService == null || mServerIf == 0) return false;
 
-        mServices.add(service);
+        mPendingService = service;
 
         try {
-            mService.beginServiceDeclaration(mServerIf, service.getType(),
-                service.getInstanceId(), service.getHandles(),
-                new ParcelUuid(service.getUuid()));
-
-            List<BluetoothGattService> includedServices = service.getIncludedServices();
-            for (BluetoothGattService includedService : includedServices) {
-                mService.addIncludedService(mServerIf,
-                    includedService.getType(),
-                    includedService.getInstanceId(),
-                    new ParcelUuid(includedService.getUuid()));
-            }
-
-            List<BluetoothGattCharacteristic> characteristics = service.getCharacteristics();
-            for (BluetoothGattCharacteristic characteristic : characteristics) {
-                int permission = ((characteristic.getKeySize() - 7) << 12)
-                                    + characteristic.getPermissions();
-                mService.addCharacteristic(mServerIf,
-                    new ParcelUuid(characteristic.getUuid()),
-                    characteristic.getProperties(), permission);
-
-                List<BluetoothGattDescriptor> descriptors = characteristic.getDescriptors();
-                for (BluetoothGattDescriptor descriptor: descriptors) {
-                    permission = ((characteristic.getKeySize() - 7) << 12)
-                                        + descriptor.getPermissions();
-                    mService.addDescriptor(mServerIf,
-                        new ParcelUuid(descriptor.getUuid()), permission);
-                }
-            }
-
-            mService.endServiceDeclaration(mServerIf);
+            mService.addService(mServerIf, service);
         } catch (RemoteException e) {
             Log.e(TAG,"",e);
             return false;
@@ -590,8 +614,7 @@ public final class BluetoothGattServer implements BluetoothProfile {
         if (intService == null) return false;
 
         try {
-            mService.removeService(mServerIf, service.getType(),
-                service.getInstanceId(), new ParcelUuid(service.getUuid()));
+            mService.removeService(mServerIf, service.getInstanceId());
             mServices.remove(intService);
         } catch (RemoteException e) {
             Log.e(TAG,"",e);

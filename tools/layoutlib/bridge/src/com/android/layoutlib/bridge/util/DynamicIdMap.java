@@ -19,6 +19,7 @@ package com.android.layoutlib.bridge.util;
 import com.android.resources.ResourceType;
 import com.android.util.Pair;
 
+import android.annotation.NonNull;
 import android.util.SparseArray;
 
 import java.util.HashMap;
@@ -26,8 +27,8 @@ import java.util.Map;
 
 public class DynamicIdMap {
 
-    private final Map<Pair<ResourceType, String>, Integer> mDynamicIds = new HashMap<Pair<ResourceType, String>, Integer>();
-    private final SparseArray<Pair<ResourceType, String>> mRevDynamicIds = new SparseArray<Pair<ResourceType, String>>();
+    private final Map<Pair<ResourceType, String>, Integer> mDynamicIds = new HashMap<>();
+    private final SparseArray<Pair<ResourceType, String>> mRevDynamicIds = new SparseArray<>();
     private int mDynamicSeed;
 
     public DynamicIdMap(int seed) {
@@ -48,6 +49,7 @@ public class DynamicIdMap {
      * @param name the name of the resource
      * @return an integer.
      */
+    @NonNull
     public Integer getId(ResourceType type, String name) {
         return getId(Pair.of(type, name));
     }
@@ -59,10 +61,11 @@ public class DynamicIdMap {
      * @param resource the type/name of the resource
      * @return an integer.
      */
+    @NonNull
     public Integer getId(Pair<ResourceType, String> resource) {
         Integer value = mDynamicIds.get(resource);
         if (value == null) {
-            value = Integer.valueOf(++mDynamicSeed);
+            value = ++mDynamicSeed;
             mDynamicIds.put(resource, value);
             mRevDynamicIds.put(value, resource);
         }

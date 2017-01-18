@@ -16,36 +16,104 @@
 
 package com.android.layoutlib.bridge.bars;
 
+import com.android.ide.common.rendering.api.LayoutLog;
+import com.android.layoutlib.bridge.Bridge;
+import com.android.layoutlib.bridge.android.BridgeContext;
+import com.android.layoutlib.bridge.android.BridgeXmlBlockParser;
+import com.android.layoutlib.bridge.impl.ParserFactory;
 import com.android.resources.Density;
-import com.android.resources.ResourceType;
 
 import org.xmlpull.v1.XmlPullParserException;
 
 import android.content.Context;
+import android.content.pm.ApplicationInfo;
 import android.graphics.drawable.Drawable;
-import android.graphics.drawable.LevelListDrawable;
+import android.util.AttributeSet;
 import android.view.Gravity;
+import android.view.View;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
+import java.io.IOException;
+import java.io.InputStream;
+
 public class StatusBar extends CustomBar {
 
-    public StatusBar(Context context, Density density, int direction, boolean RtlEnabled)
-            throws XmlPullParserException {
-        // FIXME: if direction is RTL but it's not enabled in application manifest, mirror this bar.
+    private final int mSimulatedPlatformVersion;
+    /** Status bar background color attribute name. */
+    private static final String ATTR_COLOR = "statusBarColor";
+    /** Attribute for translucency property. */
+    public static final String ATTR_TRANSLUCENT = "windowTranslucentStatus";
 
-        super(context, density, LinearLayout.HORIZONTAL, "/bars/status_bar.xml", "status_bar.xml");
+    /**
+     * Constructor to be used when creating the {@link StatusBar} as a regular control. This
+     * is currently used by the theme editor.
+     */
+    @SuppressWarnings("UnusedParameters")
+    public StatusBar(Context context, AttributeSet attrs) {
+        this((BridgeContext) context,
+                Density.getEnum(((BridgeContext) context).getMetrics().densityDpi),
+                ((BridgeContext) context).getConfiguration().getLayoutDirection() ==
+                        View.LAYOUT_DIRECTION_RTL,
+                (context.getApplicationInfo().flags & ApplicationInfo.FLAG_SUPPORTS_RTL) != 0,
+                context.getApplicationInfo().targetSdkVersion);
+    }
+
+    @SuppressWarnings("UnusedParameters")
+    public StatusBar(BridgeContext context, Density density, boolean isRtl, boolean rtlEnabled,
+            int simulatedPlatformVersion) {
+        // FIXME: if direction is RTL but it's not enabled in application manifest, mirror this bar.
+        super(context, LinearLayout.HORIZONTAL, "/bars/status_bar.xml", "status_bar.xml",
+                simulatedPlatformVersion);
+        mSimulatedPlatformVersion = simulatedPlatformVersion;
 
         // FIXME: use FILL_H?
         setGravity(Gravity.START | Gravity.TOP | Gravity.RIGHT);
-        setBackgroundColor(0xFF000000);
+
+        int color = getBarColor(ATTR_COLOR, ATTR_TRANSLUCENT);
+        setBackgroundColor(color == 0 ? Config.getStatusBarColor(simulatedPlatformVersion) : color);
 
         // Cannot access the inside items through id because no R.id values have been
         // created for them.
         // We do know the order though.
         // 0 is the spacer
-        loadIcon(1, "stat_sys_wifi_signal_4_fully.png", density);
-        loadIcon(2, "stat_sys_battery_charge_anim100.png", density);
+        loadIcon(1, "stat_sys_wifi_signal_4_fully."
+                        + Config.getWifiIconType(simulatedPlatformVersion), density);
+        loadIcon(2, "stat_sys_battery_100.png", density);
+        setText(3, Config.getTime(simulatedPlatformVersion), false)
+                .setTextColor(Config.getTimeColor(simulatedPlatformVersion));
+    }
+
+    @Override
+    protected void loadIcon(int index, String iconName, Density density) {
+        if (!iconName.endsWith(".xml")) {
+            super.loadIcon(index, iconName, density);
+            return;
+        }
+        View child = getChildAt(index);
+        if (child instanceof ImageView) {
+            ImageView imageView = (ImageView) child;
+            // The xml is stored only in xhdpi.
+            IconLoader iconLoader = new IconLoader(iconName, Density.XHIGH,
+                    mSimulatedPlatformVersion, null);
+            InputStream stream = iconLoader.getIcon();
+
+            if (stream != null) {
+                try {
+                    BridgeXmlBlockParser parser = new BridgeXmlBlockParser(
+                            ParserFactory.create(stream, null), (BridgeContext) mContext, true);
+                    imageView.setImageDrawable(
+                            Drawable.createFromXml(mContext.getResources(), parser));
+                } catch (XmlPullParserException e) {
+                    Bridge.getLog().error(LayoutLog.TAG_BROKEN, "Unable to draw wifi icon", e,
+                            null);
+                } catch (IOException e) {
+                    Bridge.getLog().error(LayoutLog.TAG_BROKEN, "Unable to draw wifi icon", e,
+                            null);
+                }
+            }
+        }
     }
 
     @Override

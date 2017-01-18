@@ -17,6 +17,7 @@
 package android.media;
 
 import android.graphics.Canvas;
+import android.media.MediaPlayer.TrackInfo;
 import android.os.Handler;
 import android.util.Log;
 import android.util.LongSparseArray;
@@ -75,6 +76,14 @@ public abstract class SubtitleTrack implements MediaTimeProvider.OnMediaTimeList
 
     private long mNextScheduledTimeMs = -1;
 
+    protected void onData(SubtitleData data) {
+        long runID = data.getStartTimeUs() + 1;
+        onData(data.getData(), true /* eos */, runID);
+        setRunDiscardTimeMs(
+                runID,
+                (data.getStartTimeUs() + data.getDurationUs()) / 1000);
+    }
+
     /**
      * Called when there is input data for the subtitle track.  The
      * complete subtitle for a track can include multiple whole units
@@ -83,7 +92,7 @@ public abstract class SubtitleTrack implements MediaTimeProvider.OnMediaTimeList
      * indicating the last section of the run.  Calls from different
      * runs must not be intermixed.
      *
-     * @param data
+     * @param data subtitle data byte buffer
      * @param eos true if this is the last section of the run.
      * @param runID mostly-unique ID for this run of data.  Subtitle cues
      *              with runID of 0 are discarded immediately after
@@ -92,10 +101,8 @@ public abstract class SubtitleTrack implements MediaTimeProvider.OnMediaTimeList
      *              with other runID-s are discarded at the end of the
      *              run, which defaults to the latest timestamp of
      *              any of its cues (with this runID).
-     *
-     * TODO use ByteBuffer
      */
-    public abstract void onData(String data, boolean eos, long runID);
+    public abstract void onData(byte[] data, boolean eos, long runID);
 
     /**
      * Called when adding the subtitle rendering widget to the view hierarchy,
@@ -268,7 +275,10 @@ public abstract class SubtitleTrack implements MediaTimeProvider.OnMediaTimeList
         }
 
         mVisible = true;
-        getRenderingWidget().setVisible(true);
+        RenderingWidget renderingWidget = getRenderingWidget();
+        if (renderingWidget != null) {
+            renderingWidget.setVisible(true);
+        }
         if (mTimeProvider != null) {
             mTimeProvider.scheduleUpdate(this);
         }
@@ -283,7 +293,10 @@ public abstract class SubtitleTrack implements MediaTimeProvider.OnMediaTimeList
         if (mTimeProvider != null) {
             mTimeProvider.cancelNotifications(this);
         }
-        getRenderingWidget().setVisible(false);
+        RenderingWidget renderingWidget = getRenderingWidget();
+        if (renderingWidget != null) {
+            renderingWidget.setVisible(false);
+        }
         mVisible = false;
     }
 
@@ -595,6 +608,14 @@ public abstract class SubtitleTrack implements MediaTimeProvider.OnMediaTimeList
             }
         }
     }
+
+    /** @hide whether this is a text track who fires events instead getting rendered */
+    public int getTrackType() {
+        return getRenderingWidget() == null
+                ? TrackInfo.MEDIA_TRACK_TYPE_TIMEDTEXT
+                : TrackInfo.MEDIA_TRACK_TYPE_SUBTITLE;
+    }
+
 
     /** @hide */
     private static class Run {

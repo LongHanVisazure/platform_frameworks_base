@@ -21,20 +21,18 @@ import java.io.OutputStream;
 
 /**
  * A Picture records drawing calls (via the canvas returned by beginRecording)
- * and can then play them back into Canvas (via {@link Picture#draw(Canvas)} or 
+ * and can then play them back into Canvas (via {@link Picture#draw(Canvas)} or
  * {@link Canvas#drawPicture(Picture)}).For most content (e.g. text, lines, rectangles),
  * drawing a sequence from a picture can be faster than the equivalent API
  * calls, since the picture performs its playback without incurring any
  * method-call overhead.
+ *
+ * <p class="note"><strong>Note:</strong> Prior to API level 23 a picture cannot
+ * be replayed on a hardware accelerated canvas.</p>
  */
 public class Picture {
     private Canvas mRecordingCanvas;
-    private final long mNativePicture;
-
-    /**
-     * @hide
-     */
-    public final boolean createdFromStream;
+    private long mNativePicture;
 
     private static final int WORKING_STREAM_STORAGE = 16 * 1024;
 
@@ -42,7 +40,7 @@ public class Picture {
      * Creates an empty picture that is ready to record.
      */
     public Picture() {
-        this(nativeConstructor(0), false);
+        this(nativeConstructor(0));
     }
 
     /**
@@ -51,9 +49,26 @@ public class Picture {
      * changes will not be reflected in this picture.
      */
     public Picture(Picture src) {
-        this(nativeConstructor(src != null ? src.mNativePicture : 0), false);
+        this(nativeConstructor(src != null ? src.mNativePicture : 0));
     }
-    
+
+    private Picture(long nativePicture) {
+        if (nativePicture == 0) {
+            throw new RuntimeException();
+        }
+        mNativePicture = nativePicture;
+    }
+
+    @Override
+    protected void finalize() throws Throwable {
+        try {
+            nativeDestructor(mNativePicture);
+            mNativePicture = 0;
+        } finally {
+            super.finalize();
+        }
+    }
+
     /**
      * To record a picture, call beginRecording() and then draw into the Canvas
      * that is returned. Nothing we appear on screen, but all of the draw
@@ -67,7 +82,7 @@ public class Picture {
         mRecordingCanvas = new RecordingCanvas(this, ni);
         return mRecordingCanvas;
     }
-    
+
     /**
      * Call endRecording when the picture is built. After this call, the picture
      * may be drawn, but the canvas that was returned by beginRecording must not
@@ -85,29 +100,36 @@ public class Picture {
      * Get the width of the picture as passed to beginRecording. This
      * does not reflect (per se) the content of the picture.
      */
-    public native int getWidth();
+    public int getWidth() {
+      return nativeGetWidth(mNativePicture);
+    }
 
     /**
      * Get the height of the picture as passed to beginRecording. This
      * does not reflect (per se) the content of the picture.
      */
-    public native int getHeight();
-    
+    public int getHeight() {
+      return nativeGetHeight(mNativePicture);
+    }
+
     /**
-     * Draw this picture on the canvas. The picture may have the side effect
-     * of changing the matrix and clip of the canvas.
-     * 
+     * Draw this picture on the canvas.
+     * <p>
+     * Prior to {@link android.os.Build.VERSION_CODES#LOLLIPOP}, this call could
+     * have the side effect of changing the matrix and clip of the canvas
+     * if this picture had imbalanced saves/restores.
+     *
      * <p>
      * <strong>Note:</strong> This forces the picture to internally call
      * {@link Picture#endRecording()} in order to prepare for playback.
      *
-     * @param canvas  The picture is drawn to this canvas 
+     * @param canvas  The picture is drawn to this canvas
      */
     public void draw(Canvas canvas) {
         if (mRecordingCanvas != null) {
             endRecording();
         }
-        nativeDraw(canvas.mNativeCanvas, mNativePicture);
+        nativeDraw(canvas.getNativeCanvasWrapper(), mNativePicture);
     }
 
     /**
@@ -116,10 +138,6 @@ public class Picture {
      * have been persisted across device restarts are not guaranteed to decode
      * properly and are highly discouraged.
      *
-     * <p>
-     * <strong>Note:</strong> a picture created from an input stream cannot be
-     * replayed on a hardware accelerated canvas.
-     * 
      * @see #writeToStream(java.io.OutputStream)
      * @deprecated The recommended alternative is to not use writeToStream and
      * instead draw the picture into a Bitmap from which you can persist it as
@@ -127,7 +145,7 @@ public class Picture {
      */
     @Deprecated
     public static Picture createFromStream(InputStream stream) {
-        return new Picture(nativeCreateFromStream(stream, new byte[WORKING_STREAM_STORAGE]), true);
+        return new Picture(nativeCreateFromStream(stream, new byte[WORKING_STREAM_STORAGE]));
     }
 
     /**
@@ -135,10 +153,6 @@ public class Picture {
      * the picture in this or another process by calling createFromStream(...)
      * The resulting stream is NOT to be persisted across device restarts as
      * there is no guarantee that the Picture can be successfully reconstructed.
-     *
-     * <p>
-     * <strong>Note:</strong> a picture created from an input stream cannot be
-     * replayed on a hardware accelerated canvas.
      *
      * @see #createFromStream(java.io.InputStream)
      * @deprecated The recommended alternative is to draw the picture into a
@@ -156,38 +170,18 @@ public class Picture {
         }
     }
 
-    protected void finalize() throws Throwable {
-        try {
-            nativeDestructor(mNativePicture);
-        } finally {
-            super.finalize();
-        }
-    }
-
-    final long ni() {
-        return mNativePicture;
-    }
-    
-    private Picture(long nativePicture, boolean fromStream) {
-        if (nativePicture == 0) {
-            throw new RuntimeException();
-        }
-        mNativePicture = nativePicture;
-        createdFromStream = fromStream;
-    }
-
     // return empty picture if src is 0, or a copy of the native src
     private static native long nativeConstructor(long nativeSrcOr0);
-    private static native long nativeCreateFromStream(InputStream stream,
-                                                byte[] storage);
-    private static native long nativeBeginRecording(long nativeCanvas,
-                                                    int w, int h);
+    private static native long nativeCreateFromStream(InputStream stream, byte[] storage);
+    private static native int nativeGetWidth(long nativePicture);
+    private static native int nativeGetHeight(long nativePicture);
+    private static native long nativeBeginRecording(long nativeCanvas, int w, int h);
     private static native void nativeEndRecording(long nativeCanvas);
     private static native void nativeDraw(long nativeCanvas, long nativePicture);
     private static native boolean nativeWriteToStream(long nativePicture,
                                            OutputStream stream, byte[] storage);
     private static native void nativeDestructor(long nativePicture);
-    
+
     private static class RecordingCanvas extends Canvas {
         private final Picture mPicture;
 
@@ -195,21 +189,18 @@ public class Picture {
             super(nativeCanvas);
             mPicture = pict;
         }
-        
+
         @Override
         public void setBitmap(Bitmap bitmap) {
-            throw new RuntimeException(
-                                "Cannot call setBitmap on a picture canvas");
+            throw new RuntimeException("Cannot call setBitmap on a picture canvas");
         }
 
         @Override
         public void drawPicture(Picture picture) {
             if (mPicture == picture) {
-                throw new RuntimeException(
-                            "Cannot draw a picture into its recording canvas");
+                throw new RuntimeException("Cannot draw a picture into its recording canvas");
             }
             super.drawPicture(picture);
         }
     }
 }
-

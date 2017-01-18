@@ -17,24 +17,24 @@
 
 package com.android.tools.layoutlib.create;
 
-import static org.junit.Assert.assertArrayEquals;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotNull;
-
 import com.android.tools.layoutlib.create.AsmAnalyzer.DependencyVisitor;
 
-import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.objectweb.asm.ClassReader;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URL;
 import java.util.ArrayList;
-import java.util.HashSet;
+import java.util.Collections;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+
+import static org.junit.Assert.assertArrayEquals;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
 
 /**
  * Unit tests for some methods of {@link AsmAnalyzer}.
@@ -50,22 +50,24 @@ public class AsmAnalyzerTest {
         mLog = new MockLog();
         URL url = this.getClass().getClassLoader().getResource("data/mock_android.jar");
 
-        mOsJarPath = new ArrayList<String>();
+        mOsJarPath = new ArrayList<>();
+        //noinspection ConstantConditions
         mOsJarPath.add(url.getFile());
 
-        Set<String> excludeClasses = new HashSet<String>(1);
-        excludeClasses.add("java.lang.JavaClass");
-        mAa = new AsmAnalyzer(mLog, mOsJarPath, null /* gen */,
-                null /* deriveFrom */, null /* includeGlobs */, excludeClasses);
-    }
+        Set<String> excludeClasses = Collections.singleton("java.lang.JavaClass");
 
-    @After
-    public void tearDown() throws Exception {
+        String[] includeFiles = new String[]{"mock_android/data/data*"};
+        mAa = new AsmAnalyzer(mLog, mOsJarPath, null /* gen */, null /* deriveFrom */,
+                null /* includeGlobs */, excludeClasses, includeFiles);
     }
 
     @Test
     public void testParseZip() throws IOException {
-        Map<String, ClassReader> map = mAa.parseZip(mOsJarPath);
+
+        Map<String, ClassReader> map = new TreeMap<>();
+        Map<String, InputStream> filesFound = new TreeMap<>();
+
+        mAa.parseZip(mOsJarPath, map, filesFound);
 
         assertArrayEquals(new String[] {
                 "java.lang.JavaClass",
@@ -76,6 +78,7 @@ public class AsmAnalyzerTest {
                 "mock_android.dummy.InnerTest$MyStaticInnerClass",
                 "mock_android.dummy.InnerTest$NotStaticInner1",
                 "mock_android.dummy.InnerTest$NotStaticInner2",
+                "mock_android.util.EmptyArray",
                 "mock_android.view.View",
                 "mock_android.view.ViewGroup",
                 "mock_android.view.ViewGroup$LayoutParams",
@@ -86,12 +89,18 @@ public class AsmAnalyzerTest {
                 "mock_android.widget.TableLayout$LayoutParams"
             },
             map.keySet().toArray());
+        assertArrayEquals(new String[] {"mock_android/data/dataFile"},
+            filesFound.keySet().toArray());
     }
 
     @Test
     public void testFindClass() throws IOException, LogAbortException {
-        Map<String, ClassReader> zipClasses = mAa.parseZip(mOsJarPath);
-        TreeMap<String, ClassReader> found = new TreeMap<String, ClassReader>();
+
+        Map<String, ClassReader> zipClasses = new TreeMap<>();
+        Map<String, InputStream> filesFound = new TreeMap<>();
+
+        mAa.parseZip(mOsJarPath, zipClasses, filesFound);
+        TreeMap<String, ClassReader> found = new TreeMap<>();
 
         ClassReader cr = mAa.findClass("mock_android.view.ViewGroup$LayoutParams",
                 zipClasses, found);
@@ -105,8 +114,12 @@ public class AsmAnalyzerTest {
 
     @Test
     public void testFindGlobs() throws IOException, LogAbortException {
-        Map<String, ClassReader> zipClasses = mAa.parseZip(mOsJarPath);
-        TreeMap<String, ClassReader> found = new TreeMap<String, ClassReader>();
+
+        Map<String, ClassReader> zipClasses = new TreeMap<>();
+        Map<String, InputStream> filesFound = new TreeMap<>();
+
+        mAa.parseZip(mOsJarPath, zipClasses, filesFound);
+        TreeMap<String, ClassReader> found = new TreeMap<>();
 
         // this matches classes, a package match returns nothing
         found.clear();
@@ -164,8 +177,12 @@ public class AsmAnalyzerTest {
 
     @Test
     public void testFindClassesDerivingFrom() throws LogAbortException, IOException {
-        Map<String, ClassReader> zipClasses = mAa.parseZip(mOsJarPath);
-        TreeMap<String, ClassReader> found = new TreeMap<String, ClassReader>();
+
+        Map<String, ClassReader> zipClasses = new TreeMap<>();
+        Map<String, InputStream> filesFound = new TreeMap<>();
+
+        mAa.parseZip(mOsJarPath, zipClasses, filesFound);
+        TreeMap<String, ClassReader> found = new TreeMap<>();
 
         mAa.findClassesDerivingFrom("mock_android.view.View", zipClasses, found);
 
@@ -186,21 +203,26 @@ public class AsmAnalyzerTest {
 
     @Test
     public void testDependencyVisitor() throws IOException, LogAbortException {
-        Map<String, ClassReader> zipClasses = mAa.parseZip(mOsJarPath);
-        TreeMap<String, ClassReader> keep = new TreeMap<String, ClassReader>();
-        TreeMap<String, ClassReader> new_keep = new TreeMap<String, ClassReader>();
-        TreeMap<String, ClassReader> in_deps = new TreeMap<String, ClassReader>();
-        TreeMap<String, ClassReader> out_deps = new TreeMap<String, ClassReader>();
 
-        ClassReader cr = mAa.findClass("mock_android.widget.TableLayout", zipClasses, keep);
+        Map<String, ClassReader> zipClasses = new TreeMap<>();
+        Map<String, InputStream> filesFound = new TreeMap<>();
+
+        mAa.parseZip(mOsJarPath, zipClasses, filesFound);
+        TreeMap<String, ClassReader> keep = new TreeMap<>();
+        TreeMap<String, ClassReader> new_keep = new TreeMap<>();
+        TreeMap<String, ClassReader> in_deps = new TreeMap<>();
+        TreeMap<String, ClassReader> out_deps = new TreeMap<>();
+
+        ClassReader cr = mAa.findClass("mock_android.widget.LinearLayout", zipClasses, keep);
         DependencyVisitor visitor = mAa.getVisitor(zipClasses, keep, new_keep, in_deps, out_deps);
 
         // get first level dependencies
         cr.accept(visitor, 0 /* flags */);
 
         assertArrayEquals(new String[] {
+                "mock_android.util.EmptyArray",
                 "mock_android.view.ViewGroup",
-                "mock_android.widget.TableLayout$LayoutParams",
+                "mock_android.widget.LinearLayout$LayoutParams",
             },
             out_deps.keySet().toArray());
 
@@ -230,7 +252,7 @@ public class AsmAnalyzerTest {
 
         assertArrayEquals(new String[] { }, out_deps.keySet().toArray());
         assertArrayEquals(new String[] {
-                "mock_android.widget.TableLayout",
+                "mock_android.widget.LinearLayout",
         }, keep.keySet().toArray());
     }
 }

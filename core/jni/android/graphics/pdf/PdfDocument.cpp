@@ -16,31 +16,40 @@
 
 #include "jni.h"
 #include "GraphicsJNI.h"
-#include <android_runtime/AndroidRuntime.h>
+#include "core_jni_helpers.h"
 #include <vector>
 
 #include "CreateJavaOutputStreamAdaptor.h"
 
-#include "SkCanvas.h"
 #include "SkDocument.h"
 #include "SkPicture.h"
+#include "SkPictureRecorder.h"
 #include "SkStream.h"
 #include "SkRect.h"
+
+#include <hwui/Canvas.h>
 
 namespace android {
 
 struct PageRecord {
 
     PageRecord(int width, int height, const SkRect& contentRect)
-            : mPicture(new SkPicture()), mWidth(width), mHeight(height) {
+            : mPictureRecorder(new SkPictureRecorder())
+            , mPicture(NULL)
+            , mWidth(width)
+            , mHeight(height) {
         mContentRect = contentRect;
     }
 
     ~PageRecord() {
-        mPicture->unref();
+        delete mPictureRecorder;
+        if (NULL != mPicture) {
+            mPicture->unref();
+        }
     }
 
-    SkPicture* const mPicture;
+    SkPictureRecorder* mPictureRecorder;
+    SkPicture* mPicture;
     const int mWidth;
     const int mHeight;
     SkRect mContentRect;
@@ -62,34 +71,31 @@ public:
         mPages.push_back(page);
         mCurrentPage = page;
 
-        SkCanvas* canvas = page->mPicture->beginRecording(
-                contentRect.width(), contentRect.height(), 0);
-
-        // We pass this canvas to Java where it is used to construct
-        // a Java Canvas object which dereferences the pointer when it
-        // is destroyed, so we have to bump up the reference count.
-        canvas->ref();
+        SkCanvas* canvas = page->mPictureRecorder->beginRecording(
+                SkRect::MakeWH(contentRect.width(), contentRect.height()));
 
         return canvas;
     }
 
     void finishPage() {
         assert(mCurrentPage != NULL);
-        mCurrentPage->mPicture->endRecording();
+        assert(mCurrentPage->mPictureRecorder != NULL);
+        assert(mCurrentPage->mPicture == NULL);
+        mCurrentPage->mPicture = mCurrentPage->mPictureRecorder->endRecording();
+        delete mCurrentPage->mPictureRecorder;
+        mCurrentPage->mPictureRecorder = NULL;
         mCurrentPage = NULL;
     }
 
     void write(SkWStream* stream) {
-        SkDocument* document = SkDocument::CreatePDF(stream);
+        SkAutoTUnref<SkDocument> document(SkDocument::CreatePDF(stream));
         for (unsigned i = 0; i < mPages.size(); i++) {
             PageRecord* page =  mPages[i];
 
             SkCanvas* canvas = document->beginPage(page->mWidth, page->mHeight,
                     &(page->mContentRect));
 
-            canvas->clipRect(page->mContentRect);
-            canvas->translate(page->mContentRect.left(), page->mContentRect.top());
-            canvas->drawPicture(*page->mPicture);
+            canvas->drawPicture(page->mPicture);
 
             document->endPage();
         }
@@ -97,11 +103,10 @@ public:
     }
 
     void close() {
+        assert(NULL == mCurrentPage);
         for (unsigned i = 0; i < mPages.size(); i++) {
             delete mPages[i];
         }
-        delete mCurrentPage;
-        mCurrentPage = NULL;
     }
 
 private:
@@ -121,8 +126,9 @@ static jlong nativeStartPage(JNIEnv* env, jobject thiz, jlong documentPtr,
         jint pageWidth, jint pageHeight,
         jint contentLeft, jint contentTop, jint contentRight, jint contentBottom) {
     PdfDocument* document = reinterpret_cast<PdfDocument*>(documentPtr);
-    return reinterpret_cast<jlong>(document->startPage(pageWidth, pageHeight,
-            contentLeft, contentTop, contentRight, contentBottom));
+    SkCanvas* canvas = document->startPage(pageWidth, pageHeight,
+            contentLeft, contentTop, contentRight, contentBottom);
+    return reinterpret_cast<jlong>(Canvas::create_canvas(canvas));
 }
 
 static void nativeFinishPage(JNIEnv* env, jobject thiz, jlong documentPtr) {
@@ -143,7 +149,7 @@ static void nativeClose(JNIEnv* env, jobject thiz, jlong documentPtr) {
     document->close();
 }
 
-static JNINativeMethod gPdfDocument_Methods[] = {
+static const JNINativeMethod gPdfDocument_Methods[] = {
     {"nativeCreateDocument", "()J", (void*) nativeCreateDocument},
     {"nativeStartPage", "(JIIIIII)J", (void*) nativeStartPage},
     {"nativeFinishPage", "(J)V", (void*) nativeFinishPage},
@@ -152,10 +158,9 @@ static JNINativeMethod gPdfDocument_Methods[] = {
 };
 
 int register_android_graphics_pdf_PdfDocument(JNIEnv* env) {
-    int result = android::AndroidRuntime::registerNativeMethods(
+    return RegisterMethodsOrDie(
             env, "android/graphics/pdf/PdfDocument", gPdfDocument_Methods,
             NELEM(gPdfDocument_Methods));
-    return result;
 }
 
 };

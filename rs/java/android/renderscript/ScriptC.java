@@ -16,18 +16,11 @@
 
 package android.renderscript;
 
-import android.content.Context;
 import android.content.res.Resources;
-import android.util.Log;
 
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
-import java.util.Map.Entry;
-import java.util.HashMap;
-
-import java.lang.reflect.Field;
-import java.lang.reflect.Modifier;
 
 /**
  * The superclass for all user-defined scripts. This is only
@@ -51,7 +44,6 @@ public class ScriptC extends Script {
      * @param id
      * @param rs
      *
-     * @hide
      */
     protected ScriptC(long id, RenderScript rs) {
         super(id, rs);
@@ -74,11 +66,23 @@ public class ScriptC extends Script {
     }
 
     /**
-     * Name of the file that holds the object cache.
+     * Only intended for use by the generated derived classes.
+     *
+     * @param rs
      */
-    private static final String CACHE_PATH = "com.android.renderscript.cache";
-
-    static String mCachePath;
+    protected ScriptC(RenderScript rs, String resName, byte[] bitcode32, byte[] bitcode64) {
+        super(0, rs);
+        long id = 0;
+        if (RenderScript.sPointerSize == 4) {
+            id = internalStringCreate(rs, resName, bitcode32);
+        } else {
+            id = internalStringCreate(rs, resName, bitcode64);
+        }
+        if (id == 0) {
+            throw new RSRuntimeException("Loading of ScriptC script failed.");
+        }
+        setID(id);
+    }
 
     private static synchronized long internalCreate(RenderScript rs, Resources resources, int resourceID) {
         byte[] pgm;
@@ -111,13 +115,12 @@ public class ScriptC extends Script {
 
         String resName = resources.getResourceEntryName(resourceID);
 
-        // Create the RS cache path if we haven't done so already.
-        if (mCachePath == null) {
-            File f = new File(rs.mCacheDir, CACHE_PATH);
-            mCachePath = f.getAbsolutePath();
-            f.mkdirs();
-        }
         //        Log.v(TAG, "Create script for resource = " + resName);
-        return rs.nScriptCCreate(resName, mCachePath, pgm, pgmLength);
+        return rs.nScriptCCreate(resName, RenderScript.getCachePath(), pgm, pgmLength);
+    }
+
+    private static synchronized long internalStringCreate(RenderScript rs, String resName, byte[] bitcode) {
+        //        Log.v(TAG, "Create script for resource = " + resName);
+        return rs.nScriptCCreate(resName, RenderScript.getCachePath(), bitcode, bitcode.length);
     }
 }

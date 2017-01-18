@@ -16,53 +16,36 @@
 
 package com.android.systemui.statusbar.policy;
 
-import android.content.BroadcastReceiver;
-import android.content.Context;
-import android.content.Intent;
-import android.content.IntentFilter;
-import android.os.BatteryManager;
+import com.android.systemui.DemoMode;
 
-import java.util.ArrayList;
+import java.io.FileDescriptor;
+import java.io.PrintWriter;
 
-public class BatteryController extends BroadcastReceiver {
-    private static final String TAG = "StatusBar.BatteryController";
+public interface BatteryController extends DemoMode {
+    /**
+     * Prints the current state of the {@link BatteryController} to the given {@link PrintWriter}.
+     */
+    void dump(FileDescriptor fd, PrintWriter pw, String[] args);
 
+    /**
+     * Sets if the current device is in power save mode.
+     */
+    void setPowerSaveMode(boolean powerSave);
 
-    private ArrayList<BatteryStateChangeCallback> mChangeCallbacks =
-            new ArrayList<BatteryStateChangeCallback>();
+    /**
+     * Returns {@code true} if the device is currently in power save mode.
+     */
+    boolean isPowerSave();
 
-    public interface BatteryStateChangeCallback {
-        public void onBatteryLevelChanged(int level, boolean pluggedIn);
-    }
+    void addStateChangedCallback(BatteryStateChangeCallback cb);
+    void removeStateChangedCallback(BatteryStateChangeCallback cb);
 
-    public BatteryController(Context context) {
-        IntentFilter filter = new IntentFilter();
-        filter.addAction(Intent.ACTION_BATTERY_CHANGED);
-        context.registerReceiver(this, filter);
-    }
-
-    public void addStateChangedCallback(BatteryStateChangeCallback cb) {
-        mChangeCallbacks.add(cb);
-    }
-
-    public void onReceive(Context context, Intent intent) {
-        final String action = intent.getAction();
-        if (action.equals(Intent.ACTION_BATTERY_CHANGED)) {
-            final int level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, 0);
-            final int status = intent.getIntExtra(BatteryManager.EXTRA_STATUS,
-                    BatteryManager.BATTERY_STATUS_UNKNOWN);
-
-            boolean plugged = false;
-            switch (status) {
-                case BatteryManager.BATTERY_STATUS_CHARGING:
-                case BatteryManager.BATTERY_STATUS_FULL:
-                    plugged = true;
-                    break;
-            }
-
-            for (BatteryStateChangeCallback cb : mChangeCallbacks) {
-                cb.onBatteryLevelChanged(level, plugged);
-            }
-        }
+    /**
+     * A listener that will be notified whenever a change in battery level or power save mode
+     * has occurred.
+     */
+    interface BatteryStateChangeCallback {
+        void onBatteryLevelChanged(int level, boolean pluggedIn, boolean charging);
+        void onPowerSaveChanged(boolean isPowerSave);
     }
 }

@@ -16,6 +16,8 @@
 
 package android.widget;
 
+import android.annotation.IntDef;
+import android.annotation.StringRes;
 import android.app.INotificationManager;
 import android.app.ITransientNotification;
 import android.content.Context;
@@ -23,16 +25,20 @@ import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.graphics.PixelFormat;
 import android.os.Handler;
+import android.os.IBinder;
+import android.os.Message;
 import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.util.Log;
 import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.View;
-import android.view.View.OnClickListener;
 import android.view.WindowManager;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityManager;
+
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 
 /**
  * A toast is a view containing a quick little message for the user.  The toast class
@@ -60,6 +66,11 @@ import android.view.accessibility.AccessibilityManager;
 public class Toast {
     static final String TAG = "Toast";
     static final boolean localLOGV = false;
+
+    /** @hide */
+    @IntDef({LENGTH_SHORT, LENGTH_LONG})
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface Duration {}
 
     /**
      * Show the view or text notification for a short period of time.  This time
@@ -105,7 +116,7 @@ public class Toast {
         }
 
         INotificationManager service = getService();
-        String pkg = mContext.getPackageName();
+        String pkg = mContext.getOpPackageName();
         TN tn = mTN;
         tn.mNextView = mNextView;
 
@@ -152,14 +163,16 @@ public class Toast {
      * @see #LENGTH_SHORT
      * @see #LENGTH_LONG
      */
-    public void setDuration(int duration) {
+    public void setDuration(@Duration int duration) {
         mDuration = duration;
+        mTN.mDuration = duration;
     }
 
     /**
      * Return the duration.
      * @see #setDuration
      */
+    @Duration
     public int getDuration() {
         return mDuration;
     }
@@ -226,6 +239,14 @@ public class Toast {
     public int getYOffset() {
         return mTN.mY;
     }
+
+    /**
+     * Gets the LayoutParams for the Toast window.
+     * @hide
+     */
+    public WindowManager.LayoutParams getWindowParams() {
+        return mTN.mParams;
+    }
     
     /**
      * Make a standard toast that just contains a text view.
@@ -237,7 +258,7 @@ public class Toast {
      *                 {@link #LENGTH_LONG}
      *
      */
-    public static Toast makeText(Context context, CharSequence text, int duration) {
+    public static Toast makeText(Context context, CharSequence text, @Duration int duration) {
         Toast result = new Toast(context);
 
         LayoutInflater inflate = (LayoutInflater)
@@ -263,7 +284,7 @@ public class Toast {
      *
      * @throws Resources.NotFoundException if the resource can't be found.
      */
-    public static Toast makeText(Context context, int resId, int duration)
+    public static Toast makeText(Context context, @StringRes int resId, @Duration int duration)
                                 throws Resources.NotFoundException {
         return makeText(context, context.getResources().getText(resId), duration);
     }
@@ -272,7 +293,7 @@ public class Toast {
      * Update the text in a Toast that was previously created using one of the makeText() methods.
      * @param resId The new text for the Toast.
      */
-    public void setText(int resId) {
+    public void setText(@StringRes int resId) {
         setText(mContext.getText(resId));
     }
     
@@ -307,13 +328,6 @@ public class Toast {
     }
 
     private static class TN extends ITransientNotification.Stub {
-        final Runnable mShow = new Runnable() {
-            @Override
-            public void run() {
-                handleShow();
-            }
-        };
-
         final Runnable mHide = new Runnable() {
             @Override
             public void run() {
@@ -324,7 +338,13 @@ public class Toast {
         };
 
         private final WindowManager.LayoutParams mParams = new WindowManager.LayoutParams();
-        final Handler mHandler = new Handler();    
+        final Handler mHandler = new Handler() {
+            @Override
+            public void handleMessage(Message msg) {
+                IBinder token = (IBinder) msg.obj;
+                handleShow(token);
+            }
+        };
 
         int mGravity;
         int mX, mY;
@@ -334,8 +354,12 @@ public class Toast {
 
         View mView;
         View mNextView;
+        int mDuration;
 
         WindowManager mWM;
+
+        static final long SHORT_DURATION_TIMEOUT = 5000;
+        static final long LONG_DURATION_TIMEOUT = 1000;
 
         TN() {
             // XXX This should be changed to use a Dialog, with a Theme.Toast
@@ -356,9 +380,9 @@ public class Toast {
          * schedule handleShow into the right thread
          */
         @Override
-        public void show() {
+        public void show(IBinder windowToken) {
             if (localLOGV) Log.v(TAG, "SHOW: " + this);
-            mHandler.post(mShow);
+            mHandler.obtainMessage(0, windowToken).sendToTarget();
         }
 
         /**
@@ -370,7 +394,7 @@ public class Toast {
             mHandler.post(mHide);
         }
 
-        public void handleShow() {
+        public void handleShow(IBinder windowToken) {
             if (localLOGV) Log.v(TAG, "HANDLE SHOW: " + this + " mView=" + mView
                     + " mNextView=" + mNextView);
             if (mView != mNextView) {
@@ -378,6 +402,7 @@ public class Toast {
                 handleHide();
                 mView = mNextView;
                 Context context = mView.getContext().getApplicationContext();
+                String packageName = mView.getContext().getOpPackageName();
                 if (context == null) {
                     context = mView.getContext();
                 }
@@ -397,6 +422,10 @@ public class Toast {
                 mParams.y = mY;
                 mParams.verticalMargin = mVerticalMargin;
                 mParams.horizontalMargin = mHorizontalMargin;
+                mParams.packageName = packageName;
+                mParams.hideTimeoutMilliseconds = mDuration ==
+                    Toast.LENGTH_LONG ? LONG_DURATION_TIMEOUT : SHORT_DURATION_TIMEOUT;
+                mParams.token = windowToken;
                 if (mView.getParent() != null) {
                     if (localLOGV) Log.v(TAG, "REMOVE! " + mView + " in " + this);
                     mWM.removeView(mView);
@@ -431,7 +460,7 @@ public class Toast {
                 // the view isn't yet added, so let's try not to crash.
                 if (mView.getParent() != null) {
                     if (localLOGV) Log.v(TAG, "REMOVE! " + mView + " in " + this);
-                    mWM.removeView(mView);
+                    mWM.removeViewImmediate(mView);
                 }
 
                 mView = null;

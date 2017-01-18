@@ -153,14 +153,21 @@ public class BitmapFactory {
          *
          * <p>This does not affect bitmaps without an alpha channel.</p>
          *
+         * <p>Setting this flag to false while setting {@link #inScaled} to true
+         * may result in incorrect colors.</p>
+         *
          * @see Bitmap#hasAlpha()
          * @see Bitmap#isPremultiplied()
+         * @see #inScaled
          */
         public boolean inPremultiplied;
 
         /**
-         * If dither is true, the decoder will attempt to dither the decoded
-         * image.
+         * @deprecated As of {@link android.os.Build.VERSION_CODES#N}, this is
+         * ignored.
+         *
+         * In {@link android.os.Build.VERSION_CODES#M} and below, if dither is
+         * true, the decoder will attempt to dither the decoded image.
          */
         public boolean inDither;
 
@@ -249,11 +256,18 @@ public class BitmapFactory {
          * <p>This flag is turned on by default and should be turned off if you need
          * a non-scaled version of the bitmap.  Nine-patch bitmaps ignore this
          * flag and are always scaled.
+         *
+         * <p>If {@link #inPremultiplied} is set to false, and the image has alpha,
+         * setting this flag to true may result in incorrect colors.
          */
         public boolean inScaled;
 
         /**
-         * If this is set to true, then the resulting bitmap will allocate its
+         * @deprecated As of {@link android.os.Build.VERSION_CODES#LOLLIPOP}, this is
+         * ignored.
+         *
+         * In {@link android.os.Build.VERSION_CODES#KITKAT} and below, if this
+         * is set to true, then the resulting bitmap will allocate its
          * pixels such that they can be purged if the system needs to reclaim
          * memory. In that instance, when the pixels need to be accessed again
          * (e.g. the bitmap is drawn, getPixels() is called), they will be
@@ -280,18 +294,28 @@ public class BitmapFactory {
          * android.graphics.BitmapFactory.Options)} or {@link #decodeFile(String,
          * android.graphics.BitmapFactory.Options)}.</p>
          */
+        @Deprecated
         public boolean inPurgeable;
 
         /**
-         * This field works in conjuction with inPurgeable. If inPurgeable is
-         * false, then this field is ignored. If inPurgeable is true, then this
-         * field determines whether the bitmap can share a reference to the
-         * input data (inputstream, array, etc.) or if it must make a deep copy.
+         * @deprecated As of {@link android.os.Build.VERSION_CODES#LOLLIPOP}, this is
+         * ignored.
+         *
+         * In {@link android.os.Build.VERSION_CODES#KITKAT} and below, this
+         * field works in conjuction with inPurgeable. If inPurgeable is false,
+         * then this field is ignored. If inPurgeable is true, then this field
+         * determines whether the bitmap can share a reference to the input
+         * data (inputstream, array, etc.) or if it must make a deep copy.
          */
+        @Deprecated
         public boolean inInputShareable;
 
         /**
-         * If inPreferQualityOverSpeed is set to true, the decoder will try to
+         * @deprecated As of {@link android.os.Build.VERSION_CODES#N}, this is
+         * ignored.  The output will always be high quality.
+         *
+         * In {@link android.os.Build.VERSION_CODES#M} and below, if
+         * inPreferQualityOverSpeed is set to true, the decoder will try to
          * decode the reconstructed image to a higher quality even at the
          * expense of the decoding speed. Currently the field only affects JPEG
          * decode, in the case of which a more accurate, but slightly slower,
@@ -300,17 +324,22 @@ public class BitmapFactory {
         public boolean inPreferQualityOverSpeed;
 
         /**
-         * The resulting width of the bitmap, set independent of the state of
-         * inJustDecodeBounds. However, if there is an error trying to decode,
-         * outWidth will be set to -1.
+         * The resulting width of the bitmap. If {@link #inJustDecodeBounds} is
+         * set to false, this will be width of the output bitmap after any
+         * scaling is applied. If true, it will be the width of the input image
+         * without any accounting for scaling.
+         *
+         * <p>outWidth will be set to -1 if there is an error trying to decode.</p>
          */
-
         public int outWidth;
 
         /**
-         * The resulting height of the bitmap, set independent of the state of
-         * inJustDecodeBounds. However, if there is an error trying to decode,
-         * outHeight will be set to -1. 
+         * The resulting height of the bitmap. If {@link #inJustDecodeBounds} is
+         * set to false, this will be height of the output bitmap after any
+         * scaling is applied. If true, it will be the height of the input image
+         * without any accounting for scaling.
+         *
+         * <p>outHeight will be set to -1 if there is an error trying to decode.</p>
          */
         public int outHeight;
 
@@ -325,9 +354,10 @@ public class BitmapFactory {
          */
         public byte[] inTempStorage;
 
-        private native void requestCancel();
-
         /**
+         * @deprecated As of {@link android.os.Build.VERSION_CODES#N}, see
+         * comments on {@link #requestCancelDecode()}.
+         *
          * Flag to indicate that cancel has been called on this object.  This
          * is useful if there's an intermediary that wants to first decode the
          * bounds and then decode the image.  In that case the intermediary
@@ -337,16 +367,19 @@ public class BitmapFactory {
         public boolean mCancel;
 
         /**
-         *  This can be called from another thread while this options object is
-         *  inside a decode... call. Calling this will notify the decoder that
-         *  it should cancel its operation. This is not guaranteed to cancel
-         *  the decode, but if it does, the decoder... operation will return
-         *  null, or if inJustDecodeBounds is true, will set outWidth/outHeight
+         *  @deprecated As of {@link android.os.Build.VERSION_CODES#N}, this
+         *  will not affect the decode, though it will still set mCancel.
+         *
+         *  In {@link android.os.Build.VERSION_CODES#M} and below, if this can
+         *  be called from another thread while this options object is inside
+         *  a decode... call. Calling this will notify the decoder that it
+         *  should cancel its operation. This is not guaranteed to cancel the
+         *  decode, but if it does, the decoder... operation will return null,
+         *  or if inJustDecodeBounds is true, will set outWidth/outHeight
          *  to -1
          */
         public void requestCancelDecode() {
             mCancel = true;
-            requestCancel();
         }
     }
 
@@ -465,7 +498,7 @@ public class BitmapFactory {
 
     /**
      * Synonym for {@link #decodeResource(Resources, int, android.graphics.BitmapFactory.Options)}
-     * will null Options.
+     * with null Options.
      *
      * @param res The resources object containing the image data
      * @param id The resource id of the image data

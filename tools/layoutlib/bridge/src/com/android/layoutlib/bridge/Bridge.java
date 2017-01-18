@@ -16,17 +16,15 @@
 
 package com.android.layoutlib.bridge;
 
-import static com.android.ide.common.rendering.api.Result.Status.ERROR_UNKNOWN;
-import static com.android.ide.common.rendering.api.Result.Status.SUCCESS;
-
 import com.android.ide.common.rendering.api.Capability;
 import com.android.ide.common.rendering.api.DrawableParams;
+import com.android.ide.common.rendering.api.Features;
 import com.android.ide.common.rendering.api.LayoutLog;
 import com.android.ide.common.rendering.api.RenderSession;
 import com.android.ide.common.rendering.api.Result;
 import com.android.ide.common.rendering.api.Result.Status;
 import com.android.ide.common.rendering.api.SessionParams;
-import com.android.layoutlib.bridge.impl.FontLoader;
+import com.android.layoutlib.bridge.android.RenderParamsFlags;
 import com.android.layoutlib.bridge.impl.RenderDrawable;
 import com.android.layoutlib.bridge.impl.RenderSessionImpl;
 import com.android.layoutlib.bridge.util.DynamicIdMap;
@@ -35,12 +33,13 @@ import com.android.resources.ResourceType;
 import com.android.tools.layoutlib.create.MethodAdapter;
 import com.android.tools.layoutlib.create.OverrideMethod;
 import com.android.util.Pair;
-import com.ibm.icu.util.ULocale;
 
+import android.annotation.NonNull;
 import android.content.res.BridgeAssetManager;
 import android.graphics.Bitmap;
-import android.graphics.Typeface_Accessor;
+import android.graphics.FontFamily_Delegate;
 import android.graphics.Typeface_Delegate;
+import android.icu.util.ULocale;
 import android.os.Looper;
 import android.os.Looper_Accessor;
 import android.view.View;
@@ -52,16 +51,22 @@ import java.lang.ref.SoftReference;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.locks.ReentrantLock;
 
+import libcore.io.MemoryMappedFile_Delegate;
+
+import static com.android.ide.common.rendering.api.Result.Status.ERROR_UNKNOWN;
+import static com.android.ide.common.rendering.api.Result.Status.SUCCESS;
+
 /**
  * Main entry point of the LayoutLib Bridge.
  * <p/>To use this bridge, simply instantiate an object of type {@link Bridge} and call
- * {@link #createScene(SceneParams)}
+ * {@link #createSession(SessionParams)}
  */
 public final class Bridge extends com.android.ide.common.rendering.api.Bridge {
 
@@ -90,7 +95,7 @@ public final class Bridge extends com.android.ide.common.rendering.api.Bridge {
     /**
      * Same as sRMap except for int[] instead of int resources. This is for android.R only.
      */
-    private final static Map<IntArray, String> sRArrayMap = new HashMap<IntArray, String>();
+    private final static Map<IntArray, String> sRArrayMap = new HashMap<IntArray, String>(384);
     /**
      * Reverse map compared to sRMap, resource type -> (resource name -> id).
      * This is for com.android.internal.R.
@@ -147,8 +152,7 @@ public final class Bridge extends com.android.ide.common.rendering.api.Bridge {
             if (getClass() != obj.getClass()) return false;
 
             IntArray other = (IntArray) obj;
-            if (!Arrays.equals(mArray, other.mArray)) return false;
-            return true;
+            return Arrays.equals(mArray, other.mArray);
         }
     }
 
@@ -180,7 +184,7 @@ public final class Bridge extends com.android.ide.common.rendering.api.Bridge {
      */
     private static LayoutLog sCurrentLog = sDefaultLog;
 
-    private EnumSet<Capability> mCapabilities;
+    private static final int LAST_SUPPORTED_FEATURE = Features.THEME_PREVIEW_NAVIGATION_BAR;
 
     @Override
     public int getApiLevel() {
@@ -188,8 +192,16 @@ public final class Bridge extends com.android.ide.common.rendering.api.Bridge {
     }
 
     @Override
+    @Deprecated
     public EnumSet<Capability> getCapabilities() {
-        return mCapabilities;
+        // The Capability class is deprecated and frozen. All Capabilities enumerated there are
+        // supported by this version of LayoutLibrary. So, it's safe to use EnumSet.allOf()
+        return EnumSet.allOf(Capability.class);
+    }
+
+    @Override
+    public boolean supports(int feature) {
+        return feature <= LAST_SUPPORTED_FEATURE;
     }
 
     @Override
@@ -199,24 +211,6 @@ public final class Bridge extends com.android.ide.common.rendering.api.Bridge {
             LayoutLog log) {
         sPlatformProperties = platformProperties;
         sEnumValueMap = enumValueMap;
-
-        // don't use EnumSet.allOf(), because the bridge doesn't come with its specific version
-        // of layoutlib_api. It is provided by the client which could have a more recent version
-        // with newer, unsupported capabilities.
-        mCapabilities = EnumSet.of(
-                Capability.UNBOUND_RENDERING,
-                Capability.CUSTOM_BACKGROUND_COLOR,
-                Capability.RENDER,
-                Capability.LAYOUT_ONLY,
-                Capability.EMBEDDED_LAYOUT,
-                Capability.VIEW_MANIPULATION,
-                Capability.PLAY_ANIMATION,
-                Capability.ANIMATED_VIEW_MANIPULATION,
-                Capability.ADAPTER_BINDING,
-                Capability.EXTENDED_VIEWINFO,
-                Capability.FIXED_SCALABLE_NINE_PATCH,
-                Capability.RTL);
-
 
         BridgeAssetManager.initSystem();
 
@@ -250,59 +244,156 @@ public final class Bridge extends com.android.ide.common.rendering.api.Bridge {
         }
 
         // load the fonts.
-        FontLoader fontLoader = FontLoader.create(fontLocation.getAbsolutePath());
-        if (fontLoader != null) {
-            Typeface_Delegate.init(fontLoader);
-        } else {
-            log.error(LayoutLog.TAG_BROKEN,
-                    "Failed create FontLoader in layout lib.", null);
-            return false;
-        }
+        FontFamily_Delegate.setFontLocation(fontLocation.getAbsolutePath());
+        MemoryMappedFile_Delegate.setDataDir(fontLocation.getAbsoluteFile().getParentFile());
 
         // now parse com.android.internal.R (and only this one as android.R is a subset of
         // the internal version), and put the content in the maps.
         try {
             Class<?> r = com.android.internal.R.class;
+            // Parse the styleable class first, since it may contribute to attr values.
+            parseStyleable();
 
             for (Class<?> inner : r.getDeclaredClasses()) {
+                if (inner == com.android.internal.R.styleable.class) {
+                    // Already handled the styleable case. Not skipping attr, as there may be attrs
+                    // that are not referenced from styleables.
+                    continue;
+                }
                 String resTypeName = inner.getSimpleName();
                 ResourceType resType = ResourceType.getEnum(resTypeName);
                 if (resType != null) {
-                    Map<String, Integer> fullMap = new HashMap<String, Integer>();
-                    sRevRMap.put(resType, fullMap);
+                    Map<String, Integer> fullMap = null;
+                    switch (resType) {
+                        case ATTR:
+                            fullMap = sRevRMap.get(ResourceType.ATTR);
+                            break;
+                        case STRING:
+                        case STYLE:
+                            // Slightly less than thousand entries in each.
+                            fullMap = new HashMap<String, Integer>(1280);
+                            // no break.
+                        default:
+                            if (fullMap == null) {
+                                fullMap = new HashMap<String, Integer>();
+                            }
+                            sRevRMap.put(resType, fullMap);
+                    }
 
                     for (Field f : inner.getDeclaredFields()) {
                         // only process static final fields. Since the final attribute may have
                         // been altered by layoutlib_create, we only check static
-                        int modifiers = f.getModifiers();
-                        if (Modifier.isStatic(modifiers)) {
-                            Class<?> type = f.getType();
-                            if (type.isArray() && type.getComponentType() == int.class) {
-                                // if the object is an int[] we put it in sRArrayMap using an IntArray
-                                // wrapper that properly implements equals and hashcode for the array
-                                // objects, as required by the map contract.
-                                sRArrayMap.put(new IntArray((int[]) f.get(null)), f.getName());
-                            } else if (type == int.class) {
-                                Integer value = (Integer) f.get(null);
-                                sRMap.put(value, Pair.of(resType, f.getName()));
-                                fullMap.put(f.getName(), value);
-                            } else {
-                                assert false;
-                            }
+                        if (!isValidRField(f)) {
+                            continue;
+                        }
+                        Class<?> type = f.getType();
+                        if (type.isArray()) {
+                            // if the object is an int[] we put it in sRArrayMap using an IntArray
+                            // wrapper that properly implements equals and hashcode for the array
+                            // objects, as required by the map contract.
+                            sRArrayMap.put(new IntArray((int[]) f.get(null)), f.getName());
+                        } else {
+                            Integer value = (Integer) f.get(null);
+                            sRMap.put(value, Pair.of(resType, f.getName()));
+                            fullMap.put(f.getName(), value);
                         }
                     }
                 }
             }
-        } catch (Throwable throwable) {
+        } catch (Exception throwable) {
             if (log != null) {
                 log.error(LayoutLog.TAG_BROKEN,
                         "Failed to load com.android.internal.R from the layout library jar",
-                        throwable);
+                        throwable, null);
             }
             return false;
         }
 
         return true;
+    }
+
+    /**
+     * Tests if the field is pubic, static and one of int or int[].
+     */
+    private static boolean isValidRField(Field field) {
+        int modifiers = field.getModifiers();
+        boolean isAcceptable = Modifier.isPublic(modifiers) && Modifier.isStatic(modifiers);
+        Class<?> type = field.getType();
+        return isAcceptable && type == int.class ||
+                (type.isArray() && type.getComponentType() == int.class);
+
+    }
+
+    private static void parseStyleable() throws Exception {
+        // R.attr doesn't contain all the needed values. There are too many resources in the
+        // framework for all to be in the R class. Only the ones specified manually in
+        // res/values/symbols.xml are put in R class. Since, we need to create a map of all attr
+        // values, we try and find them from the styleables.
+
+        // There were 1500 elements in this map at M timeframe.
+        Map<String, Integer> revRAttrMap = new HashMap<String, Integer>(2048);
+        sRevRMap.put(ResourceType.ATTR, revRAttrMap);
+        // There were 2000 elements in this map at M timeframe.
+        Map<String, Integer> revRStyleableMap = new HashMap<String, Integer>(3072);
+        sRevRMap.put(ResourceType.STYLEABLE, revRStyleableMap);
+        Class<?> c = com.android.internal.R.styleable.class;
+        Field[] fields = c.getDeclaredFields();
+        // Sort the fields to bring all arrays to the beginning, so that indices into the array are
+        // able to refer back to the arrays (i.e. no forward references).
+        Arrays.sort(fields, new Comparator<Field>() {
+            @Override
+            public int compare(Field o1, Field o2) {
+                if (o1 == o2) {
+                    return 0;
+                }
+                Class<?> t1 = o1.getType();
+                Class<?> t2 = o2.getType();
+                if (t1.isArray() && !t2.isArray()) {
+                    return -1;
+                } else if (t2.isArray() && !t1.isArray()) {
+                    return 1;
+                }
+                return o1.getName().compareTo(o2.getName());
+            }
+        });
+        Map<String, int[]> styleables = new HashMap<String, int[]>();
+        for (Field field : fields) {
+            if (!isValidRField(field)) {
+                // Only consider public static fields that are int or int[].
+                // Don't check the final flag as it may have been modified by layoutlib_create.
+                continue;
+            }
+            String name = field.getName();
+            if (field.getType().isArray()) {
+                int[] styleableValue = (int[]) field.get(null);
+                sRArrayMap.put(new IntArray(styleableValue), name);
+                styleables.put(name, styleableValue);
+                continue;
+            }
+            // Not an array.
+            String arrayName = name;
+            int[] arrayValue = null;
+            int index;
+            while ((index = arrayName.lastIndexOf('_')) >= 0) {
+                // Find the name of the corresponding styleable.
+                // Search in reverse order so that attrs like LinearLayout_Layout_layout_gravity
+                // are mapped to LinearLayout_Layout and not to LinearLayout.
+                arrayName = arrayName.substring(0, index);
+                arrayValue = styleables.get(arrayName);
+                if (arrayValue != null) {
+                    break;
+                }
+            }
+            index = (Integer) field.get(null);
+            if (arrayValue != null) {
+                String attrName = name.substring(arrayName.length() + 1);
+                int attrValue = arrayValue[index];
+                sRMap.put(attrValue, Pair.of(ResourceType.ATTR, attrName));
+                revRAttrMap.put(attrName, attrValue);
+            }
+            sRMap.put(index, Pair.of(ResourceType.STYLEABLE, name));
+            revRStyleableMap.put(name, index);
+        }
     }
 
     @Override
@@ -310,7 +401,7 @@ public final class Bridge extends com.android.ide.common.rendering.api.Bridge {
         BridgeAssetManager.clearSystem();
 
         // dispose of the default typeface.
-        Typeface_Accessor.resetDefaults();
+        Typeface_Delegate.resetDefaults();
 
         return true;
     }
@@ -318,7 +409,9 @@ public final class Bridge extends com.android.ide.common.rendering.api.Bridge {
     /**
      * Starts a layout session by inflating and rendering it. The method returns a
      * {@link RenderSession} on which further actions can be taken.
-     *
+     * <p/>
+     * If {@link SessionParams} includes the {@link RenderParamsFlags#FLAG_DO_NOT_RENDER_ON_CREATE},
+     * this method will only inflate the layout but will NOT render it.
      * @param params the {@link SessionParams} object with all the information necessary to create
      *           the scene.
      * @return a new {@link RenderSession} object that contains the result of the layout.
@@ -334,7 +427,10 @@ public final class Bridge extends com.android.ide.common.rendering.api.Bridge {
                 lastResult = scene.init(params.getTimeout());
                 if (lastResult.isSuccess()) {
                     lastResult = scene.inflate();
-                    if (lastResult.isSuccess()) {
+
+                    boolean doNotRenderOnCreate = Boolean.TRUE.equals(
+                            params.getFlag(RenderParamsFlags.FLAG_DO_NOT_RENDER_ON_CREATE));
+                    if (lastResult.isSuccess() && !doNotRenderOnCreate) {
                         lastResult = scene.render(true /*freshRender*/);
                     }
                 }
@@ -425,8 +521,7 @@ public final class Bridge extends com.android.ide.common.rendering.api.Bridge {
             locale = "";
         }
         ULocale uLocale = new ULocale(locale);
-        return uLocale.getCharacterOrientation().equals(ICU_LOCALE_DIRECTION_RTL) ?
-                true : false;
+        return uLocale.getCharacterOrientation().equals(ICU_LOCALE_DIRECTION_RTL);
     }
 
     /**
@@ -442,7 +537,7 @@ public final class Bridge extends com.android.ide.common.rendering.api.Bridge {
      * Note that while this can be called several time, the first call to {@link #cleanupThread()}
      * will do the clean-up, and make the thread unable to do further scene actions.
      */
-    public static void prepareThread() {
+    public synchronized static void prepareThread() {
         // we need to make sure the Looper has been initialized for this thread.
         // this is required for View that creates Handler objects.
         if (Looper.myLooper() == null) {
@@ -456,7 +551,7 @@ public final class Bridge extends com.android.ide.common.rendering.api.Bridge {
      * Note that it doesn't matter how many times {@link #prepareThread()} was called, a single
      * call to this will prevent the thread from doing further scene actions
      */
-    public static void cleanupThread() {
+    public synchronized static void cleanupThread() {
         // clean up the looper
         Looper_Accessor.cleanupThread();
     }
@@ -467,7 +562,7 @@ public final class Bridge extends com.android.ide.common.rendering.api.Bridge {
 
     public static void setLog(LayoutLog log) {
         // check only the thread currently owning the lock can do this.
-        if (sLock.isHeldByCurrentThread() == false) {
+        if (!sLock.isHeldByCurrentThread()) {
             throw new IllegalStateException("scene must be acquired first. see #acquire(long)");
         }
 
@@ -497,7 +592,6 @@ public final class Bridge extends com.android.ide.common.rendering.api.Bridge {
 
     /**
      * Returns the name of a framework resource whose value is an int array.
-     * @param array
      */
     public static String resolveResourceId(int[] array) {
         sIntArrayWrapper.set(array);
@@ -506,10 +600,15 @@ public final class Bridge extends com.android.ide.common.rendering.api.Bridge {
 
     /**
      * Returns the integer id of a framework resource, from a given resource type and resource name.
+     * <p/>
+     * If no resource is found, it creates a dynamic id for the resource.
+     *
      * @param type the type of the resource
      * @param name the name of the resource.
-     * @return an {@link Integer} containing the resource id, or null if no resource were found.
+     *
+     * @return an {@link Integer} containing the resource id.
      */
+    @NonNull
     public static Integer getResourceId(ResourceType type, String name) {
         Map<String, Integer> map = sRevRMap.get(type);
         Integer value = null;
@@ -517,11 +616,8 @@ public final class Bridge extends com.android.ide.common.rendering.api.Bridge {
             value = map.get(name);
         }
 
-        if (value == null) {
-            value = sDynamicIds.getId(type, name);
-        }
+        return value == null ? sDynamicIds.getId(type, name) : value;
 
-        return value;
     }
 
     /**

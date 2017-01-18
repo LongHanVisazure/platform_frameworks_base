@@ -17,8 +17,11 @@
 package libcore.icu;
 
 import com.android.tools.layoutlib.annotations.LayoutlibDelegate;
-import com.ibm.icu.text.DateTimePatternGenerator;
-import com.ibm.icu.util.ULocale;
+
+import android.icu.text.DateTimePatternGenerator;
+import android.icu.util.Currency;
+import android.icu.util.ULocale;
+import android.icu.util.VersionInfo;
 
 import java.util.Locale;
 
@@ -52,18 +55,19 @@ public class ICU_Delegate {
     }
 
     @LayoutlibDelegate
+    @SuppressWarnings("deprecation")
     /*package*/ static String getCldrVersion() {
-        return "22.1.1";      // TODO: check what the right value should be.
+        return VersionInfo.ICU_DATA_VERSION.toString();
     }
 
     @LayoutlibDelegate
     /*package*/ static String getIcuVersion() {
-        return "unknown_layoutlib";
+        return VersionInfo.ICU_VERSION.toString();
     }
 
     @LayoutlibDelegate
     /*package*/ static String getUnicodeVersion() {
-        return "5.2";
+        return VersionInfo.UNICODE_7_0.toString();
     }
 
     @LayoutlibDelegate
@@ -117,6 +121,11 @@ public class ICU_Delegate {
     }
 
     @LayoutlibDelegate
+    /*package*/ static int getCurrencyNumericCode(String currencyCode) {
+        return Currency.getInstance(currencyCode).getNumericCode();
+    }
+
+    @LayoutlibDelegate
     /*package*/ static String getCurrencySymbol(String locale, String currencyCode) {
         return "";
     }
@@ -142,12 +151,12 @@ public class ICU_Delegate {
     }
 
     @LayoutlibDelegate
-    /*package*/ static String getISO3CountryNative(String locale) {
+    /*package*/ static String getISO3Country(String locale) {
         return "";
     }
 
     @LayoutlibDelegate
-    /*package*/ static String getISO3LanguageNative(String locale) {
+    /*package*/ static String getISO3Language(String locale) {
         return "";
     }
 
@@ -171,23 +180,12 @@ public class ICU_Delegate {
         return Locale.getISOCountries();
     }
 
-
-    @LayoutlibDelegate
-    /*package*/ static String localeForLanguageTag(String languageTag, boolean strict) {
-        return "";
-    }
-
-    @LayoutlibDelegate
-    /*package*/ static String languageTagForLocale(String locale) {
-        return "";
-    }
-
     @LayoutlibDelegate
     /*package*/ static boolean initLocaleDataNative(String locale, LocaleData result) {
 
         // Used by Calendar.
-        result.firstDayOfWeek = Integer.valueOf(1);
-        result.minimalDaysInFirstWeek = Integer.valueOf(1);
+        result.firstDayOfWeek = 1;
+        result.minimalDaysInFirstWeek = 1;
 
         // Used by DateFormatSymbols.
         result.amPm = new String[] { "AM", "PM" };
@@ -228,7 +226,7 @@ public class ICU_Delegate {
         result.decimalSeparator = '.';
         result.groupingSeparator = ',';
         result.patternSeparator = ' ';
-        result.percent = '%';
+        result.percent = "%";
         result.perMill = '\u2030';
         result.monetarySeparator = ' ';
         result.minusSign = "-";
@@ -256,5 +254,10 @@ public class ICU_Delegate {
     @LayoutlibDelegate
     /*package*/ static String getDefaultLocale() {
         return ICU.getDefaultLocale();
+    }
+
+    @LayoutlibDelegate
+    /*package*/ static String getTZDataVersion() {
+        return ICU.getTZDataVersion();
     }
 }

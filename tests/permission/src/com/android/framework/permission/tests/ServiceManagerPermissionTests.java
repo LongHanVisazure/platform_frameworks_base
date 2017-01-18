@@ -32,7 +32,7 @@ import junit.framework.TestCase;
  */
 public class ServiceManagerPermissionTests extends TestCase {
     @SmallTest
-	public void testAddService() {
+    public void testAddService() {
         try {
             // The security in the service manager is that you can't replace
             // a service that is already published.
@@ -43,7 +43,7 @@ public class ServiceManagerPermissionTests extends TestCase {
         } catch (SecurityException e) {
             // expected
         }
-	}
+    }
 
     @SmallTest
     public void testSetPermissionController() {
@@ -51,6 +51,16 @@ public class ServiceManagerPermissionTests extends TestCase {
             IPermissionController pc = new IPermissionController.Stub() {
                 public boolean checkPermission(java.lang.String permission, int pid, int uid) {
                     return true;
+                }
+
+                @Override
+                public String[] getPackagesForUid(int uid) {
+                    return new String[0];
+                }
+
+                @Override
+                public boolean isRuntimePermission(String permission) {
+                    return false;
                 }
             };
             ServiceManagerNative.asInterface(BinderInternal.getContextObject())

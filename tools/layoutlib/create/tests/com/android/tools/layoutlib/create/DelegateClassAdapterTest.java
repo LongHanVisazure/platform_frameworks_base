@@ -27,6 +27,7 @@ import static org.junit.Assert.fail;
 import com.android.tools.layoutlib.create.dataclass.ClassWithNative;
 import com.android.tools.layoutlib.create.dataclass.OuterClass;
 import com.android.tools.layoutlib.create.dataclass.OuterClass.InnerClass;
+import com.android.tools.layoutlib.create.dataclass.OuterClass.StaticInnerClass;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -52,10 +53,10 @@ public class DelegateClassAdapterTest {
 
     private MockLog mLog;
 
-    private static final String NATIVE_CLASS_NAME = ClassWithNative.class.getCanonicalName();
-    private static final String OUTER_CLASS_NAME = OuterClass.class.getCanonicalName();
-    private static final String INNER_CLASS_NAME = OuterClass.class.getCanonicalName() + "$" +
-                                                   InnerClass.class.getSimpleName();
+    private static final String NATIVE_CLASS_NAME = ClassWithNative.class.getName();
+    private static final String OUTER_CLASS_NAME = OuterClass.class.getName();
+    private static final String INNER_CLASS_NAME = InnerClass.class.getName();
+    private static final String STATIC_INNER_CLASS_NAME = StaticInnerClass.class.getName();
 
     @Before
     public void setUp() throws Exception {
@@ -66,12 +67,12 @@ public class DelegateClassAdapterTest {
     /**
      * Tests that a class not being modified still works.
      */
-    @SuppressWarnings("unchecked")
     @Test
     public void testNoOp() throws Throwable {
         // create an instance of the class that will be modified
         // (load the class in a distinct class loader so that we can trash its definition later)
         ClassLoader cl1 = new ClassLoader(this.getClass().getClassLoader()) { };
+        @SuppressWarnings("unchecked")
         Class<ClassWithNative> clazz1 = (Class<ClassWithNative>) cl1.loadClass(NATIVE_CLASS_NAME);
         ClassWithNative instance1 = clazz1.newInstance();
         assertEquals(42, instance1.add(20, 22));
@@ -85,7 +86,7 @@ public class DelegateClassAdapterTest {
         // Now process it but tell the delegate to not modify any method
         ClassWriter cw = new ClassWriter(0 /*flags*/);
 
-        HashSet<String> delegateMethods = new HashSet<String>();
+        HashSet<String> delegateMethods = new HashSet<>();
         String internalClassName = NATIVE_CLASS_NAME.replace('.', '/');
         DelegateClassAdapter cv = new DelegateClassAdapter(
                 mLog, cw, internalClassName, delegateMethods);
@@ -116,9 +117,16 @@ public class DelegateClassAdapterTest {
 
                     // Check that the native method does NOT have the new annotation
                     Method[] m = clazz2.getDeclaredMethods();
-                    assertEquals("native_instance", m[2].getName());
-                    assertTrue(Modifier.isNative(m[2].getModifiers()));
-                    Annotation[] a = m[2].getAnnotations();
+                    Method nativeInstanceMethod = null;
+                    for (Method method : m) {
+                        if ("native_instance".equals(method.getName())) {
+                            nativeInstanceMethod = method;
+                            break;
+                        }
+                    }
+                    assertNotNull(nativeInstanceMethod);
+                    assertTrue(Modifier.isNative(nativeInstanceMethod.getModifiers()));
+                    Annotation[] a = nativeInstanceMethod.getAnnotations();
                     assertEquals(0, a.length);
                 }
             };
@@ -130,7 +138,7 @@ public class DelegateClassAdapterTest {
     }
 
     /**
-     * {@link DelegateMethodAdapter2} does not support overriding constructors yet,
+     * {@link DelegateMethodAdapter} does not support overriding constructors yet,
      * so this should fail with an {@link UnsupportedOperationException}.
      *
      * Although not tested here, the message of the exception should contain the
@@ -142,7 +150,7 @@ public class DelegateClassAdapterTest {
 
         String internalClassName = NATIVE_CLASS_NAME.replace('.', '/');
 
-        HashSet<String> delegateMethods = new HashSet<String>();
+        HashSet<String> delegateMethods = new HashSet<>();
         delegateMethods.add("<init>");
         DelegateClassAdapter cv = new DelegateClassAdapter(
                 mLog, cw, internalClassName, delegateMethods);
@@ -156,7 +164,7 @@ public class DelegateClassAdapterTest {
         ClassWriter cw = new ClassWriter(0 /*flags*/);
         String internalClassName = NATIVE_CLASS_NAME.replace('.', '/');
 
-        HashSet<String> delegateMethods = new HashSet<String>();
+        HashSet<String> delegateMethods = new HashSet<>();
         delegateMethods.add(DelegateClassAdapter.ALL_NATIVES);
         DelegateClassAdapter cv = new DelegateClassAdapter(
                 mLog, cw, internalClassName, delegateMethods);
@@ -184,9 +192,16 @@ public class DelegateClassAdapterTest {
 
                      // Check that the native method now has the new annotation and is not native
                      Method[] m = clazz2.getDeclaredMethods();
-                     assertEquals("native_instance", m[2].getName());
-                     assertFalse(Modifier.isNative(m[2].getModifiers()));
-                     Annotation[] a = m[2].getAnnotations();
+                     Method nativeInstanceMethod = null;
+                     for (Method method : m) {
+                         if ("native_instance".equals(method.getName())) {
+                             nativeInstanceMethod = method;
+                             break;
+                         }
+                     }
+                     assertNotNull(nativeInstanceMethod);
+                     assertFalse(Modifier.isNative(nativeInstanceMethod.getModifiers()));
+                     Annotation[] a = nativeInstanceMethod.getAnnotations();
                      assertEquals("LayoutlibDelegate", a[0].annotationType().getSimpleName());
                 }
             };
@@ -200,7 +215,7 @@ public class DelegateClassAdapterTest {
     @Test
     public void testDelegateInner() throws Throwable {
         // We'll delegate the "get" method of both the inner and outer class.
-        HashSet<String> delegateMethods = new HashSet<String>();
+        HashSet<String> delegateMethods = new HashSet<>();
         delegateMethods.add("get");
         delegateMethods.add("privateMethod");
 
@@ -237,13 +252,8 @@ public class DelegateClassAdapterTest {
                     assertEquals(4+10+20, callGet(o2, 10, 20));
                     assertEquals(1+10+20, callGet_Original(o2, 10, 20));
 
-                    // The original Outer has a private method that is
-                    // delegated. We should be able to call both the delegate
-                    // and the original (which is now public).
-                    assertEquals("outerPrivateMethod",
-                                 callMethod(o2, "privateMethod_Original", false /*makePublic*/));
-
-                    // The original method is private, so by default we can't access it
+                    // The original Outer has a private method,
+                    // so by default we can't access it.
                     boolean gotIllegalAccessException = false;
                     try {
                          callMethod(o2, "privateMethod", false /*makePublic*/);
@@ -251,16 +261,24 @@ public class DelegateClassAdapterTest {
                         gotIllegalAccessException = true;
                     }
                     assertTrue(gotIllegalAccessException);
-                    // Try again, but now making it accessible
-                    assertEquals("outerPrivate_Delegate",
-                            callMethod(o2, "privateMethod", true /*makePublic*/));
+
+                    // The private method from original Outer has been
+                    // delegated. The delegate generated should have the
+                    // same access.
+                    gotIllegalAccessException = false;
+                    try {
+                        assertEquals("outerPrivateMethod",
+                                callMethod(o2, "privateMethod_Original", false /*makePublic*/));
+                    } catch (IllegalAccessException e) {
+                        gotIllegalAccessException = true;
+                    }
+                    assertTrue(gotIllegalAccessException);
 
                     // Check the inner class. Since it's not a static inner class, we need
                     // to use the hidden constructor that takes the outer class as first parameter.
                     Class<?> innerClazz2 = loadClass(INNER_CLASS_NAME);
-                    Constructor<?> innerCons = innerClazz2.getConstructor(
-                                                                new Class<?>[] { outerClazz2 });
-                    Object i2 = innerCons.newInstance(new Object[] { o2 });
+                    Constructor<?> innerCons = innerClazz2.getConstructor(outerClazz2);
+                    Object i2 = innerCons.newInstance(o2);
                     assertNotNull(i2);
 
                     // The original Inner.get returns 3+10+20,
@@ -271,6 +289,61 @@ public class DelegateClassAdapterTest {
             };
             cl2.add(OUTER_CLASS_NAME, cwOuter.toByteArray());
             cl2.add(INNER_CLASS_NAME, cwInner.toByteArray());
+            cl2.testModifiedInstance();
+        } catch (Throwable t) {
+            throw dumpGeneratedClass(t, cl2);
+        }
+    }
+
+    @Test
+    public void testDelegateStaticInner() throws Throwable {
+        // We'll delegate the "get" method of both the inner and outer class.
+        HashSet<String> delegateMethods = new HashSet<>();
+        delegateMethods.add("get");
+
+        // Generate the delegate for the outer class.
+        ClassWriter cwOuter = new ClassWriter(0 /*flags*/);
+        String outerClassName = OUTER_CLASS_NAME.replace('.', '/');
+        DelegateClassAdapter cvOuter = new DelegateClassAdapter(
+                mLog, cwOuter, outerClassName, delegateMethods);
+        ClassReader cr = new ClassReader(OUTER_CLASS_NAME);
+        cr.accept(cvOuter, 0 /* flags */);
+
+        // Generate the delegate for the static inner class.
+        ClassWriter cwInner = new ClassWriter(0 /*flags*/);
+        String innerClassName = STATIC_INNER_CLASS_NAME.replace('.', '/');
+        DelegateClassAdapter cvInner = new DelegateClassAdapter(
+                mLog, cwInner, innerClassName, delegateMethods);
+        cr = new ClassReader(STATIC_INNER_CLASS_NAME);
+        cr.accept(cvInner, 0 /* flags */);
+
+        // Load the generated classes in a different class loader and try them
+        ClassLoader2 cl2 = null;
+        try {
+            cl2 = new ClassLoader2() {
+                @Override
+                public void testModifiedInstance() throws Exception {
+
+                    // Check the outer class
+                    Class<?> outerClazz2 = loadClass(OUTER_CLASS_NAME);
+                    Object o2 = outerClazz2.newInstance();
+                    assertNotNull(o2);
+
+                    // Check the inner class. Since it's not a static inner class, we need
+                    // to use the hidden constructor that takes the outer class as first parameter.
+                    Class<?> innerClazz2 = loadClass(STATIC_INNER_CLASS_NAME);
+                    Constructor<?> innerCons = innerClazz2.getConstructor();
+                    Object i2 = innerCons.newInstance();
+                    assertNotNull(i2);
+
+                    // The original StaticInner.get returns 100+10+20,
+                    // but the delegate makes it return 6+10+20
+                    assertEquals(6+10+20, callGet(i2, 10, 20));
+                    assertEquals(100+10+20, callGet_Original(i2, 10, 20));
+                }
+            };
+            cl2.add(OUTER_CLASS_NAME, cwOuter.toByteArray());
+            cl2.add(STATIC_INNER_CLASS_NAME, cwInner.toByteArray());
             cl2.testModifiedInstance();
         } catch (Throwable t) {
             throw dumpGeneratedClass(t, cl2);
@@ -292,7 +365,7 @@ public class DelegateClassAdapterTest {
      */
     private abstract class ClassLoader2 extends ClassLoader {
 
-        private final Map<String, byte[]> mClassDefs = new HashMap<String, byte[]>();
+        private final Map<String, byte[]> mClassDefs = new HashMap<>();
 
         public ClassLoader2() {
             super(null);
@@ -344,10 +417,10 @@ public class DelegateClassAdapterTest {
          */
         public int callGet(Object instance, int a, long b) throws Exception {
             Method m = instance.getClass().getMethod("get",
-                    new Class<?>[] { int.class, long.class } );
+                    int.class, long.class);
 
-            Object result = m.invoke(instance, new Object[] { a, b });
-            return ((Integer) result).intValue();
+            Object result = m.invoke(instance, a, b);
+            return (Integer) result;
         }
 
         /**
@@ -356,10 +429,10 @@ public class DelegateClassAdapterTest {
          */
         public int callGet_Original(Object instance, int a, long b) throws Exception {
             Method m = instance.getClass().getMethod("get_Original",
-                    new Class<?>[] { int.class, long.class } );
+                    int.class, long.class);
 
-            Object result = m.invoke(instance, new Object[] { a, b });
-            return ((Integer) result).intValue();
+            Object result = m.invoke(instance, a, b);
+            return (Integer) result;
         }
 
         /**
@@ -388,10 +461,10 @@ public class DelegateClassAdapterTest {
          */
         public int callAdd(Object instance, int a, int b) throws Exception {
             Method m = instance.getClass().getMethod("add",
-                    new Class<?>[] { int.class, int.class });
+                    int.class, int.class);
 
-            Object result = m.invoke(instance, new Object[] { a, b });
-            return ((Integer) result).intValue();
+            Object result = m.invoke(instance, a, b);
+            return (Integer) result;
         }
 
         /**
@@ -401,10 +474,10 @@ public class DelegateClassAdapterTest {
         public int callCallNativeInstance(Object instance, int a, double d, Object[] o)
                 throws Exception {
             Method m = instance.getClass().getMethod("callNativeInstance",
-                    new Class<?>[] { int.class, double.class, Object[].class });
+                    int.class, double.class, Object[].class);
 
-            Object result = m.invoke(instance, new Object[] { a, d, o });
-            return ((Integer) result).intValue();
+            Object result = m.invoke(instance, a, d, o);
+            return (Integer) result;
         }
 
         public abstract void testModifiedInstance() throws Exception;
@@ -442,8 +515,8 @@ public class DelegateClassAdapterTest {
                 StringWriter sw = new StringWriter();
                 PrintWriter pw = new PrintWriter(sw);
                 // next 2 lines do: TraceClassVisitor tcv = new TraceClassVisitor(pw);
-                Constructor<?> cons = tcvClass.getConstructor(new Class<?>[] { pw.getClass() });
-                Object tcv = cons.newInstance(new Object[] { pw });
+                Constructor<?> cons = tcvClass.getConstructor(pw.getClass());
+                Object tcv = cons.newInstance(pw);
                 ClassReader cr2 = new ClassReader(bytes);
                 cr2.accept((ClassVisitor) tcv, 0 /* flags */);
 
@@ -452,8 +525,7 @@ public class DelegateClassAdapterTest {
             }
 
             // Re-throw exception with new message
-            RuntimeException ex = new RuntimeException(sb.toString(), t);
-            return ex;
+            return new RuntimeException(sb.toString(), t);
         } catch (Throwable ignore) {
             // In case of problem, just throw the original exception as-is.
             return t;

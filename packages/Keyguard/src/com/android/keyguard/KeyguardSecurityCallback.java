@@ -15,8 +15,6 @@
  */
 package com.android.keyguard;
 
-import com.android.keyguard.KeyguardHostView.OnDismissAction;
-
 public interface KeyguardSecurityCallback {
 
     /**
@@ -26,11 +24,9 @@ public interface KeyguardSecurityCallback {
     void dismiss(boolean securityVerified);
 
     /**
-     * Manually report user activity to keep the device awake. If timeout is 0,
-     * uses user-defined timeout.
-     * @param timeout
+     * Manually report user activity to keep the device awake.
      */
-    void userActivity(long timeout);
+    void userActivity();
 
     /**
      * Checks if keyguard is in "verify credentials" mode.
@@ -39,30 +35,16 @@ public interface KeyguardSecurityCallback {
     boolean isVerifyUnlockOnly();
 
     /**
-     * Call when user correctly enters their credentials
+     * Call to report an unlock attempt.
+     * @param userId id of the user whose unlock attempt is recorded.
+     * @param success set to 'true' if user correctly entered security credentials.
+     * @param timeoutMs timeout in milliseconds to wait before reattempting an unlock.
+     *                  Only nonzero if 'success' is false
      */
-    void reportSuccessfulUnlockAttempt();
+    void reportUnlockAttempt(int userId, boolean success, int timeoutMs);
 
     /**
-     * Call when the user incorrectly enters their credentials
+     * Resets the keyguard view.
      */
-    void reportFailedUnlockAttempt();
-
-    /**
-     * Gets the number of attempts thus far as reported by {@link #reportFailedUnlockAttempt()}
-     * @return number of failed attempts
-     */
-    int getFailedAttempts();
-
-    /**
-     * Shows the backup security for the current method.  If none available, this call is a no-op.
-     */
-    void showBackupSecurity();
-
-    /**
-     * Sets an action to perform after the user successfully enters their credentials.
-     * @param action
-     */
-    void setOnDismissAction(OnDismissAction action);
-
+    void reset();
 }

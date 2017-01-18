@@ -15,33 +15,87 @@
  */
 package com.android.internal.policy;
 
-import android.view.MotionEvent;
-
-import com.android.internal.policy.IKeyguardShowCallback;
+import com.android.internal.policy.IKeyguardDrawnCallback;
+import com.android.internal.policy.IKeyguardStateCallback;
 import com.android.internal.policy.IKeyguardExitCallback;
 
 import android.os.Bundle;
 
-interface IKeyguardService {
-    boolean isShowing();
-    boolean isSecure();
-    boolean isShowingAndNotHidden();
-    boolean isInputRestricted();
-    boolean isDismissable();
-    oneway void verifyUnlock(IKeyguardExitCallback callback);
-    oneway void keyguardDone(boolean authenticated, boolean wakeup);
-    oneway void setHidden(boolean isHidden);
-    oneway void dismiss();
-    oneway void onDreamingStarted();
-    oneway void onDreamingStopped();
-    oneway void onScreenTurnedOff(int reason);
-    oneway void onScreenTurnedOn(IKeyguardShowCallback callback);
-    oneway void setKeyguardEnabled(boolean enabled);
-    oneway void onSystemReady();
-    oneway void doKeyguardTimeout(in Bundle options);
-    oneway void setCurrentUser(int userId);
-    oneway void showAssistant();
-    oneway void dispatch(in MotionEvent event);
-    oneway void launchCamera();
-    oneway void onBootCompleted();
+oneway interface IKeyguardService {
+
+    /**
+     * Sets the Keyguard as occluded when a window dismisses the Keyguard with flag
+     * FLAG_SHOW_ON_LOCK_SCREEN.
+     *
+     * @param isOccluded Whether the Keyguard is occluded by another window.
+     * @param animate Whether to play an animation for the state change.
+     */
+    void setOccluded(boolean isOccluded, boolean animate);
+
+    void addStateMonitorCallback(IKeyguardStateCallback callback);
+    void verifyUnlock(IKeyguardExitCallback callback);
+    void keyguardDone(boolean authenticated, boolean wakeup);
+    void dismiss(boolean allowWhileOccluded);
+    void onDreamingStarted();
+    void onDreamingStopped();
+
+    /**
+     * Called when the device has started going to sleep.
+     *
+     * @param why {@link #OFF_BECAUSE_OF_USER}, {@link #OFF_BECAUSE_OF_ADMIN},
+     * or {@link #OFF_BECAUSE_OF_TIMEOUT}.
+     */
+    void onStartedGoingToSleep(int reason);
+
+    /**
+     * Called when the device has finished going to sleep.
+     *
+     * @param why {@link #OFF_BECAUSE_OF_USER}, {@link #OFF_BECAUSE_OF_ADMIN},
+     *            or {@link #OFF_BECAUSE_OF_TIMEOUT}.
+     * @param cameraGestureTriggered whether the camera gesture was triggered between
+     *                               {@link #onStartedGoingToSleep} and this method; if it's been
+     *                               triggered, we shouldn't lock the device.
+     */
+    void onFinishedGoingToSleep(int reason, boolean cameraGestureTriggered);
+
+    /**
+     * Called when the device has started waking up.
+     */
+    void onStartedWakingUp();
+
+    /**
+     * Called when the device screen is turning on.
+     */
+    void onScreenTurningOn(IKeyguardDrawnCallback callback);
+
+    /**
+     * Called when the screen has actually turned on.
+     */
+    void onScreenTurnedOn();
+
+    /**
+     * Called when the screen has turned off.
+     */
+    void onScreenTurnedOff();
+
+    void setKeyguardEnabled(boolean enabled);
+    void onSystemReady();
+    void doKeyguardTimeout(in Bundle options);
+    void setCurrentUser(int userId);
+    void onBootCompleted();
+
+    /**
+     * Notifies that the activity behind has now been drawn and it's safe to remove the wallpaper
+     * and keyguard flag.
+     *
+     * @param startTime the start time of the animation in uptime milliseconds
+     * @param fadeoutDuration the duration of the exit animation, in milliseconds
+     */
+    void startKeyguardExitAnimation(long startTime, long fadeoutDuration);
+
+    /**
+     * Notifies the Keyguard that the activity that was starting has now been drawn and it's safe
+     * to start the keyguard dismiss sequence.
+     */
+    void onActivityDrawn();
 }

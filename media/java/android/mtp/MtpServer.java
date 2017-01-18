@@ -23,13 +23,28 @@ package android.mtp;
 public class MtpServer implements Runnable {
 
     private long mNativeContext; // accessed by native methods
+    private final MtpDatabase mDatabase;
 
     static {
         System.loadLibrary("media_jni");
     }
 
-    public MtpServer(MtpDatabase database, boolean usePtp) {
-        native_setup(database, usePtp);
+    public MtpServer(
+            MtpDatabase database,
+            boolean usePtp,
+            String deviceInfoManufacturer,
+            String deviceInfoModel,
+            String deviceInfoDeviceVersion,
+            String deviceInfoSerialNumber) {
+        mDatabase = database;
+        native_setup(
+                database,
+                usePtp,
+                deviceInfoManufacturer,
+                deviceInfoModel,
+                deviceInfoDeviceVersion,
+                deviceInfoSerialNumber);
+        database.setServer(this);
     }
 
     public void start() {
@@ -41,6 +56,7 @@ public class MtpServer implements Runnable {
     public void run() {
         native_run();
         native_cleanup();
+        mDatabase.close();
     }
 
     public void sendObjectAdded(int handle) {
@@ -51,6 +67,10 @@ public class MtpServer implements Runnable {
         native_send_object_removed(handle);
     }
 
+    public void sendDevicePropertyChanged(int property) {
+        native_send_device_property_changed(property);
+    }
+
     public void addStorage(MtpStorage storage) {
         native_add_storage(storage);
     }
@@ -59,11 +79,23 @@ public class MtpServer implements Runnable {
         native_remove_storage(storage.getStorageId());
     }
 
-    private native final void native_setup(MtpDatabase database, boolean usePtp);
+    public static void configure(boolean usePtp) {
+        native_configure(usePtp);
+    }
+
+    public static native final void native_configure(boolean usePtp);
+    private native final void native_setup(
+            MtpDatabase database,
+            boolean usePtp,
+            String deviceInfoManufacturer,
+            String deviceInfoModel,
+            String deviceInfoDeviceVersion,
+            String deviceInfoSerialNumber);
     private native final void native_run();
     private native final void native_cleanup();
     private native final void native_send_object_added(int handle);
     private native final void native_send_object_removed(int handle);
+    private native final void native_send_device_property_changed(int property);
     private native final void native_add_storage(MtpStorage storage);
     private native final void native_remove_storage(int storageId);
 }

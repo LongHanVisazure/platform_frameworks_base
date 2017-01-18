@@ -15,36 +15,36 @@
  */
 package com.android.keyguard;
 
-import android.accounts.Account;
-import android.accounts.AccountManager;
-import android.accounts.AccountManagerCallback;
-import android.accounts.AccountManagerFuture;
-import android.accounts.AuthenticatorException;
-import android.accounts.OperationCanceledException;
 import android.content.Context;
 import android.graphics.Rect;
-import android.graphics.drawable.Drawable;
-import android.os.Bundle;
+import android.os.AsyncTask;
 import android.os.CountDownTimer;
 import android.os.SystemClock;
-import android.os.UserHandle;
+import android.text.TextUtils;
 import android.util.AttributeSet;
 import android.util.Log;
 import android.view.MotionEvent;
 import android.view.View;
-import android.widget.Button;
+import android.view.ViewGroup;
+import android.view.animation.AnimationUtils;
+import android.view.animation.Interpolator;
 import android.widget.LinearLayout;
 
+import com.android.internal.widget.LockPatternChecker;
 import com.android.internal.widget.LockPatternUtils;
 import com.android.internal.widget.LockPatternView;
+import com.android.settingslib.animation.AppearAnimationCreator;
+import com.android.settingslib.animation.AppearAnimationUtils;
+import com.android.settingslib.animation.DisappearAnimationUtils;
 
-import java.io.IOException;
 import java.util.List;
 
-public class KeyguardPatternView extends LinearLayout implements KeyguardSecurityView {
+public class KeyguardPatternView extends LinearLayout implements KeyguardSecurityView,
+        AppearAnimationCreator<LockPatternView.CellState>,
+        EmergencyButton.EmergencyButtonCallback {
 
     private static final String TAG = "SecurityPatternView";
-    private static final boolean DEBUG = false;
+    private static final boolean DEBUG = KeyguardConstants.DEBUG;
 
     // how long before we clear the wrong pattern
     private static final int PATTERN_CLEAR_TIMEOUT_MS = 2000;
@@ -52,20 +52,22 @@ public class KeyguardPatternView extends LinearLayout implements KeyguardSecurit
     // how long we stay awake after each key beyond MIN_PATTERN_BEFORE_POKE_WAKELOCK
     private static final int UNLOCK_PATTERN_WAKE_INTERVAL_MS = 7000;
 
-    // how long we stay awake after the user hits the first dot.
-    private static final int UNLOCK_PATTERN_WAKE_INTERVAL_FIRST_DOTS_MS = 2000;
-
     // how many cells the user has to cross before we poke the wakelock
     private static final int MIN_PATTERN_BEFORE_POKE_WAKELOCK = 2;
 
-    private int mFailedPatternAttemptsSinceLastTimeout = 0;
-    private int mTotalFailedPatternAttempts = 0;
+    // How much we scale up the duration of the disappear animation when the current user is locked
+    public static final float DISAPPEAR_MULTIPLIER_LOCKED = 1.5f;
+
+    private final KeyguardUpdateMonitor mKeyguardUpdateMonitor;
+    private final AppearAnimationUtils mAppearAnimationUtils;
+    private final DisappearAnimationUtils mDisappearAnimationUtils;
+    private final DisappearAnimationUtils mDisappearAnimationUtilsLocked;
+
     private CountDownTimer mCountdownTimer = null;
     private LockPatternUtils mLockPatternUtils;
+    private AsyncTask<?, ?, ?> mPendingLockCheck;
     private LockPatternView mLockPatternView;
-    private Button mForgotPatternButton;
     private KeyguardSecurityCallback mCallback;
-    private boolean mEnableFallback;
 
     /**
      * Keeps track of the last time we poked the wake lock during dispatching of the touch event.
@@ -79,14 +81,16 @@ public class KeyguardPatternView extends LinearLayout implements KeyguardSecurit
      * Useful for clearing out the wrong pattern after a delay
      */
     private Runnable mCancelPatternRunnable = new Runnable() {
+        @Override
         public void run() {
             mLockPatternView.clearPattern();
         }
     };
     private Rect mTempRect = new Rect();
-    private SecurityMessageDisplay mSecurityMessageDisplay;
+    private KeyguardMessageArea mSecurityMessageDisplay;
     private View mEcaView;
-    private Drawable mBouncerFrame;
+    private ViewGroup mContainer;
+    private int mDisappearYTranslation;
 
     enum FooterMode {
         Normal,
@@ -100,12 +104,29 @@ public class KeyguardPatternView extends LinearLayout implements KeyguardSecurit
 
     public KeyguardPatternView(Context context, AttributeSet attrs) {
         super(context, attrs);
+        mKeyguardUpdateMonitor = KeyguardUpdateMonitor.getInstance(mContext);
+        mAppearAnimationUtils = new AppearAnimationUtils(context,
+                AppearAnimationUtils.DEFAULT_APPEAR_DURATION, 1.5f /* translationScale */,
+                2.0f /* delayScale */, AnimationUtils.loadInterpolator(
+                        mContext, android.R.interpolator.linear_out_slow_in));
+        mDisappearAnimationUtils = new DisappearAnimationUtils(context,
+                125, 1.2f /* translationScale */,
+                0.6f /* delayScale */, AnimationUtils.loadInterpolator(
+                        mContext, android.R.interpolator.fast_out_linear_in));
+        mDisappearAnimationUtilsLocked = new DisappearAnimationUtils(context,
+                (long) (125 * DISAPPEAR_MULTIPLIER_LOCKED), 1.2f /* translationScale */,
+                0.6f /* delayScale */, AnimationUtils.loadInterpolator(
+                mContext, android.R.interpolator.fast_out_linear_in));
+        mDisappearYTranslation = getResources().getDimensionPixelSize(
+                R.dimen.disappear_y_translation);
     }
 
+    @Override
     public void setKeyguardCallback(KeyguardSecurityCallback callback) {
         mCallback = callback;
     }
 
+    @Override
     public void setLockPatternUtils(LockPatternUtils utils) {
         mLockPatternUtils = utils;
     }
@@ -118,53 +139,25 @@ public class KeyguardPatternView extends LinearLayout implements KeyguardSecurit
 
         mLockPatternView = (LockPatternView) findViewById(R.id.lockPatternView);
         mLockPatternView.setSaveEnabled(false);
-        mLockPatternView.setFocusable(false);
         mLockPatternView.setOnPatternListener(new UnlockPatternListener());
-
-        // stealth mode will be the same for the life of this screen
-        mLockPatternView.setInStealthMode(!mLockPatternUtils.isVisiblePatternEnabled());
 
         // vibrate mode will be the same for the life of this screen
         mLockPatternView.setTactileFeedbackEnabled(mLockPatternUtils.isTactileFeedbackEnabled());
 
-        mForgotPatternButton = (Button) findViewById(R.id.forgot_password_button);
-        // note: some configurations don't have an emergency call area
-        if (mForgotPatternButton != null) {
-            mForgotPatternButton.setText(R.string.kg_forgot_pattern_button_text);
-            mForgotPatternButton.setOnClickListener(new OnClickListener() {
-                public void onClick(View v) {
-                    mCallback.showBackupSecurity();
-                }
-            });
-        }
-
-        setFocusableInTouchMode(true);
-
-        maybeEnableFallback(mContext);
-        mSecurityMessageDisplay = new KeyguardMessageArea.Helper(this);
+        mSecurityMessageDisplay =
+                (KeyguardMessageArea) KeyguardMessageArea.findSecurityMessageDisplay(this);
         mEcaView = findViewById(R.id.keyguard_selector_fade_container);
-        View bouncerFrameView = findViewById(R.id.keyguard_bouncer_frame);
-        if (bouncerFrameView != null) {
-            mBouncerFrame = bouncerFrameView.getBackground();
+        mContainer = (ViewGroup) findViewById(R.id.container);
+
+        EmergencyButton button = (EmergencyButton) findViewById(R.id.emergency_call_button);
+        if (button != null) {
+            button.setCallback(this);
         }
     }
 
-    private void updateFooter(FooterMode mode) {
-        if (mForgotPatternButton == null) return; // no ECA? no footer
-
-        switch (mode) {
-            case Normal:
-                if (DEBUG) Log.d(TAG, "mode normal");
-                mForgotPatternButton.setVisibility(View.GONE);
-                break;
-            case ForgotLockPattern:
-                if (DEBUG) Log.d(TAG, "mode ForgotLockPattern");
-                mForgotPatternButton.setVisibility(View.VISIBLE);
-                break;
-            case VerifyUnlocked:
-                if (DEBUG) Log.d(TAG, "mode VerifyUnlocked");
-                mForgotPatternButton.setVisibility(View.GONE);
-        }
+    @Override
+    public void onEmergencyButtonClickedWhenInCall() {
+        mCallback.reset();
     }
 
     @Override
@@ -184,38 +177,27 @@ public class KeyguardPatternView extends LinearLayout implements KeyguardSecurit
         return result;
     }
 
+    @Override
     public void reset() {
         // reset lock pattern
+        mLockPatternView.setInStealthMode(!mLockPatternUtils.isVisiblePatternEnabled(
+                KeyguardUpdateMonitor.getCurrentUser()));
         mLockPatternView.enableInput();
         mLockPatternView.setEnabled(true);
         mLockPatternView.clearPattern();
 
         // if the user is currently locked out, enforce it.
-        long deadline = mLockPatternUtils.getLockoutAttemptDeadline();
+        long deadline = mLockPatternUtils.getLockoutAttemptDeadline(
+                KeyguardUpdateMonitor.getCurrentUser());
         if (deadline != 0) {
             handleAttemptLockout(deadline);
         } else {
             displayDefaultSecurityMessage();
         }
-
-        // the footer depends on how many total attempts the user has failed
-        if (mCallback.isVerifyUnlockOnly()) {
-            updateFooter(FooterMode.VerifyUnlocked);
-        } else if (mEnableFallback &&
-                (mTotalFailedPatternAttempts >= LockPatternUtils.FAILED_ATTEMPTS_BEFORE_TIMEOUT)) {
-            updateFooter(FooterMode.ForgotLockPattern);
-        } else {
-            updateFooter(FooterMode.Normal);
-        }
-
     }
 
     private void displayDefaultSecurityMessage() {
-        if (KeyguardUpdateMonitor.getInstance(mContext).getMaxBiometricUnlockAttemptsReached()) {
-            mSecurityMessageDisplay.setMessage(R.string.faceunlock_multiple_failures, true);
-        } else {
-            mSecurityMessageDisplay.setMessage(R.string.kg_pattern_instructions, false);
-        }
+        mSecurityMessageDisplay.setMessage(R.string.kg_pattern_instructions, false);
     }
 
     @Override
@@ -229,114 +211,87 @@ public class KeyguardPatternView extends LinearLayout implements KeyguardSecurit
         mLockPatternView.setOnPatternListener(null);
     }
 
-    @Override
-    public void onWindowFocusChanged(boolean hasWindowFocus) {
-        super.onWindowFocusChanged(hasWindowFocus);
-        if (hasWindowFocus) {
-            // when timeout dialog closes we want to update our state
-            reset();
-        }
-    }
-
     private class UnlockPatternListener implements LockPatternView.OnPatternListener {
 
+        @Override
         public void onPatternStart() {
             mLockPatternView.removeCallbacks(mCancelPatternRunnable);
+            mSecurityMessageDisplay.setMessage("", false);
         }
 
+        @Override
         public void onPatternCleared() {
         }
 
+        @Override
         public void onPatternCellAdded(List<LockPatternView.Cell> pattern) {
-            // To guard against accidental poking of the wakelock, look for
-            // the user actually trying to draw a pattern of some minimal length.
-            if (pattern.size() > MIN_PATTERN_BEFORE_POKE_WAKELOCK) {
-                mCallback.userActivity(UNLOCK_PATTERN_WAKE_INTERVAL_MS);
-            } else {
-                // Give just a little extra time if they hit one of the first few dots
-                mCallback.userActivity(UNLOCK_PATTERN_WAKE_INTERVAL_FIRST_DOTS_MS);
+            mCallback.userActivity();
+        }
+
+        @Override
+        public void onPatternDetected(final List<LockPatternView.Cell> pattern) {
+            mLockPatternView.disableInput();
+            if (mPendingLockCheck != null) {
+                mPendingLockCheck.cancel(false);
             }
-        }
 
-        public void onPatternDetected(List<LockPatternView.Cell> pattern) {
-            if (mLockPatternUtils.checkPattern(pattern)) {
-                mCallback.reportSuccessfulUnlockAttempt();
-                mLockPatternView.setDisplayMode(LockPatternView.DisplayMode.Correct);
-                mTotalFailedPatternAttempts = 0;
-                mCallback.dismiss(true);
-            } else {
-                if (pattern.size() > MIN_PATTERN_BEFORE_POKE_WAKELOCK) {
-                    mCallback.userActivity(UNLOCK_PATTERN_WAKE_INTERVAL_MS);
-                }
-                mLockPatternView.setDisplayMode(LockPatternView.DisplayMode.Wrong);
-                if (pattern.size() >= LockPatternUtils.MIN_PATTERN_REGISTER_FAIL) {
-                    mTotalFailedPatternAttempts++;
-                    mFailedPatternAttemptsSinceLastTimeout++;
-                    mCallback.reportFailedUnlockAttempt();
-                }
-                if (mFailedPatternAttemptsSinceLastTimeout
-                        >= LockPatternUtils.FAILED_ATTEMPTS_BEFORE_TIMEOUT) {
-                    long deadline = mLockPatternUtils.setLockoutAttemptDeadline();
-                    handleAttemptLockout(deadline);
-                } else {
-                    mSecurityMessageDisplay.setMessage(R.string.kg_wrong_pattern, true);
-                    mLockPatternView.postDelayed(mCancelPatternRunnable, PATTERN_CLEAR_TIMEOUT_MS);
-                }
-            }
-        }
-    }
-
-    private void maybeEnableFallback(Context context) {
-        // Ask the account manager if we have an account that can be used as a
-        // fallback in case the user forgets his pattern.
-        AccountAnalyzer accountAnalyzer = new AccountAnalyzer(AccountManager.get(context));
-        accountAnalyzer.start();
-    }
-
-    private class AccountAnalyzer implements AccountManagerCallback<Bundle> {
-        private final AccountManager mAccountManager;
-        private final Account[] mAccounts;
-        private int mAccountIndex;
-
-        private AccountAnalyzer(AccountManager accountManager) {
-            mAccountManager = accountManager;
-            mAccounts = accountManager.getAccountsByTypeAsUser("com.google",
-                    new UserHandle(mLockPatternUtils.getCurrentUser()));
-        }
-
-        private void next() {
-            // if we are ready to enable the fallback or if we depleted the list of accounts
-            // then finish and get out
-            if (mEnableFallback || mAccountIndex >= mAccounts.length) {
+            final int userId = KeyguardUpdateMonitor.getCurrentUser();
+            if (pattern.size() < LockPatternUtils.MIN_PATTERN_REGISTER_FAIL) {
+                mLockPatternView.enableInput();
+                onPatternChecked(userId, false, 0, false /* not valid - too short */);
                 return;
             }
 
-            // lookup the confirmCredentials intent for the current account
-            mAccountManager.confirmCredentialsAsUser(mAccounts[mAccountIndex], null, null, this,
-                    null, new UserHandle(mLockPatternUtils.getCurrentUser()));
+            mPendingLockCheck = LockPatternChecker.checkPattern(
+                    mLockPatternUtils,
+                    pattern,
+                    userId,
+                    new LockPatternChecker.OnCheckCallback() {
+
+                        @Override
+                        public void onEarlyMatched() {
+                            onPatternChecked(userId, true /* matched */, 0 /* timeoutMs */,
+                                    true /* isValidPattern */);
+                        }
+
+                        @Override
+                        public void onChecked(boolean matched, int timeoutMs) {
+                            mLockPatternView.enableInput();
+                            mPendingLockCheck = null;
+                            if (!matched) {
+                                onPatternChecked(userId, false /* matched */, timeoutMs,
+                                        true /* isValidPattern */);
+                            }
+                        }
+                    });
+            if (pattern.size() > MIN_PATTERN_BEFORE_POKE_WAKELOCK) {
+                mCallback.userActivity();
+            }
         }
 
-        public void start() {
-            mEnableFallback = false;
-            mAccountIndex = 0;
-            next();
-        }
-
-        public void run(AccountManagerFuture<Bundle> future) {
-            try {
-                Bundle result = future.getResult();
-                if (result.getParcelable(AccountManager.KEY_INTENT) != null) {
-                    mEnableFallback = true;
+        private void onPatternChecked(int userId, boolean matched, int timeoutMs,
+                boolean isValidPattern) {
+            boolean dismissKeyguard = KeyguardUpdateMonitor.getCurrentUser() == userId;
+            if (matched) {
+                mCallback.reportUnlockAttempt(userId, true, 0);
+                if (dismissKeyguard) {
+                    mLockPatternView.setDisplayMode(LockPatternView.DisplayMode.Correct);
+                    mCallback.dismiss(true);
                 }
-            } catch (OperationCanceledException e) {
-                // just skip the account if we are unable to query it
-            } catch (IOException e) {
-                // just skip the account if we are unable to query it
-            } catch (AuthenticatorException e) {
-                // just skip the account if we are unable to query it
-            } finally {
-                mAccountIndex++;
-                next();
+            } else {
+                mLockPatternView.setDisplayMode(LockPatternView.DisplayMode.Wrong);
+                if (isValidPattern) {
+                    mCallback.reportUnlockAttempt(userId, false, timeoutMs);
+                    if (timeoutMs > 0) {
+                        long deadline = mLockPatternUtils.setLockoutAttemptDeadline(
+                                userId, timeoutMs);
+                        handleAttemptLockout(deadline);
+                    }
+                }
+                if (timeoutMs == 0) {
+                    mSecurityMessageDisplay.setMessage(R.string.kg_wrong_pattern, true);
+                    mLockPatternView.postDelayed(mCancelPatternRunnable, PATTERN_CLEAR_TIMEOUT_MS);
+                }
             }
         }
     }
@@ -345,9 +300,6 @@ public class KeyguardPatternView extends LinearLayout implements KeyguardSecurit
         mLockPatternView.clearPattern();
         mLockPatternView.setEnabled(false);
         final long elapsedRealtime = SystemClock.elapsedRealtime();
-        if (mEnableFallback) {
-            updateFooter(FooterMode.ForgotLockPattern);
-        }
 
         mCountdownTimer = new CountDownTimer(elapsedRealtimeDeadline - elapsedRealtime, 1000) {
 
@@ -362,13 +314,6 @@ public class KeyguardPatternView extends LinearLayout implements KeyguardSecurit
             public void onFinish() {
                 mLockPatternView.setEnabled(true);
                 displayDefaultSecurityMessage();
-                // TODO mUnlockIcon.setVisibility(View.VISIBLE);
-                mFailedPatternAttemptsSinceLastTimeout = 0;
-                if (mEnableFallback) {
-                    updateFooter(FooterMode.ForgotLockPattern);
-                } else {
-                    updateFooter(FooterMode.Normal);
-                }
             }
 
         }.start();
@@ -385,6 +330,10 @@ public class KeyguardPatternView extends LinearLayout implements KeyguardSecurit
             mCountdownTimer.cancel();
             mCountdownTimer = null;
         }
+        if (mPendingLockCheck != null) {
+            mPendingLockCheck.cancel(false);
+            mPendingLockCheck = null;
+        }
     }
 
     @Override
@@ -398,14 +347,125 @@ public class KeyguardPatternView extends LinearLayout implements KeyguardSecurit
     }
 
     @Override
-    public void showBouncer(int duration) {
-        KeyguardSecurityViewHelper.
-                showBouncer(mSecurityMessageDisplay, mEcaView, mBouncerFrame, duration);
+    public void showPromptReason(int reason) {
+        switch (reason) {
+            case PROMPT_REASON_RESTART:
+                mSecurityMessageDisplay.setMessage(R.string.kg_prompt_reason_restart_pattern,
+                        true /* important */);
+                break;
+            case PROMPT_REASON_TIMEOUT:
+                mSecurityMessageDisplay.setMessage(R.string.kg_prompt_reason_timeout_pattern,
+                        true /* important */);
+                break;
+            case PROMPT_REASON_DEVICE_ADMIN:
+                mSecurityMessageDisplay.setMessage(R.string.kg_prompt_reason_device_admin,
+                        true /* important */);
+                break;
+            case PROMPT_REASON_USER_REQUEST:
+                mSecurityMessageDisplay.setMessage(R.string.kg_prompt_reason_user_request,
+                        true /* important */);
+                break;
+            case PROMPT_REASON_NONE:
+                break;
+            default:
+                mSecurityMessageDisplay.setMessage(R.string.kg_prompt_reason_timeout_pattern,
+                        true /* important */);
+                break;
+        }
     }
 
     @Override
-    public void hideBouncer(int duration) {
-        KeyguardSecurityViewHelper.
-                hideBouncer(mSecurityMessageDisplay, mEcaView, mBouncerFrame, duration);
+    public void showMessage(String message, int color) {
+        mSecurityMessageDisplay.setNextMessageColor(color);
+        mSecurityMessageDisplay.setMessage(message, true /* important */);
+    }
+
+    @Override
+    public void startAppearAnimation() {
+        enableClipping(false);
+        setAlpha(1f);
+        setTranslationY(mAppearAnimationUtils.getStartTranslation());
+        AppearAnimationUtils.startTranslationYAnimation(this, 0 /* delay */, 500 /* duration */,
+                0, mAppearAnimationUtils.getInterpolator());
+        mAppearAnimationUtils.startAnimation2d(
+                mLockPatternView.getCellStates(),
+                new Runnable() {
+                    @Override
+                    public void run() {
+                        enableClipping(true);
+                    }
+                },
+                this);
+        if (!TextUtils.isEmpty(mSecurityMessageDisplay.getText())) {
+            mAppearAnimationUtils.createAnimation(mSecurityMessageDisplay, 0,
+                    AppearAnimationUtils.DEFAULT_APPEAR_DURATION,
+                    mAppearAnimationUtils.getStartTranslation(),
+                    true /* appearing */,
+                    mAppearAnimationUtils.getInterpolator(),
+                    null /* finishRunnable */);
+        }
+    }
+
+    @Override
+    public boolean startDisappearAnimation(final Runnable finishRunnable) {
+        float durationMultiplier = mKeyguardUpdateMonitor.needsSlowUnlockTransition()
+                ? DISAPPEAR_MULTIPLIER_LOCKED
+                : 1f;
+        mLockPatternView.clearPattern();
+        enableClipping(false);
+        setTranslationY(0);
+        AppearAnimationUtils.startTranslationYAnimation(this, 0 /* delay */,
+                (long) (300 * durationMultiplier),
+                -mDisappearAnimationUtils.getStartTranslation(),
+                mDisappearAnimationUtils.getInterpolator());
+
+        DisappearAnimationUtils disappearAnimationUtils = mKeyguardUpdateMonitor
+                .needsSlowUnlockTransition()
+                        ? mDisappearAnimationUtilsLocked
+                        : mDisappearAnimationUtils;
+        disappearAnimationUtils.startAnimation2d(mLockPatternView.getCellStates(),
+                () -> {
+                    enableClipping(true);
+                    if (finishRunnable != null) {
+                        finishRunnable.run();
+                    }
+                }, KeyguardPatternView.this);
+        if (!TextUtils.isEmpty(mSecurityMessageDisplay.getText())) {
+            mDisappearAnimationUtils.createAnimation(mSecurityMessageDisplay, 0,
+                    (long) (200 * durationMultiplier),
+                    - mDisappearAnimationUtils.getStartTranslation() * 3,
+                    false /* appearing */,
+                    mDisappearAnimationUtils.getInterpolator(),
+                    null /* finishRunnable */);
+        }
+        return true;
+    }
+
+    private void enableClipping(boolean enable) {
+        setClipChildren(enable);
+        mContainer.setClipToPadding(enable);
+        mContainer.setClipChildren(enable);
+    }
+
+    @Override
+    public void createAnimation(final LockPatternView.CellState animatedCell, long delay,
+            long duration, float translationY, final boolean appearing,
+            Interpolator interpolator,
+            final Runnable finishListener) {
+        mLockPatternView.startCellStateAnimation(animatedCell,
+                1f, appearing ? 1f : 0f, /* alpha */
+                appearing ? translationY : 0f, appearing ? 0f : translationY, /* translation */
+                appearing ? 0f : 1f, 1f /* scale */,
+                delay, duration, interpolator, finishListener);
+        if (finishListener != null) {
+            // Also animate the Emergency call
+            mAppearAnimationUtils.createAnimation(mEcaView, delay, duration, translationY,
+                    appearing, interpolator, null);
+        }
+    }
+
+    @Override
+    public boolean hasOverlappingRendering() {
+        return false;
     }
 }

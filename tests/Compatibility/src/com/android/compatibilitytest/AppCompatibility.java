@@ -17,13 +17,16 @@
 package com.android.compatibilitytest;
 
 import android.app.ActivityManager;
+import android.app.UiAutomation;
+import android.app.UiModeManager;
 import android.app.ActivityManager.ProcessErrorStateInfo;
-import android.app.ActivityManager.RunningAppProcessInfo;
+import android.app.ActivityManager.RunningTaskInfo;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.PackageManager.NameNotFoundException;
+import android.content.res.Configuration;
 import android.os.Bundle;
 import android.test.InstrumentationTestCase;
 import android.util.Log;
@@ -39,7 +42,7 @@ import java.util.List;
  */
 public class AppCompatibility extends InstrumentationTestCase {
 
-    private static final String TAG = "AppCompability";
+    private static final String TAG = AppCompatibility.class.getSimpleName();
     private static final String PACKAGE_TO_LAUNCH = "package_to_launch";
     private static final String APP_LAUNCH_TIMEOUT_MSECS = "app_launch_timeout_ms";
     private static final String WORKSPACE_LAUNCH_TIMEOUT_MSECS = "workspace_launch_timeout_ms";
@@ -80,10 +83,12 @@ public class AppCompatibility extends InstrumentationTestCase {
         if (workspaceLaunchTimeoutMsecs != null) {
             mWorkspaceLaunchTimeout = Integer.parseInt(workspaceLaunchTimeoutMsecs);
         }
+        getInstrumentation().getUiAutomation().setRotation(UiAutomation.ROTATION_FREEZE_0);
     }
 
     @Override
     protected void tearDown() throws Exception {
+        getInstrumentation().getUiAutomation().setRotation(UiAutomation.ROTATION_UNFREEZE);
         super.tearDown();
     }
 
@@ -97,12 +102,21 @@ public class AppCompatibility extends InstrumentationTestCase {
         String packageName = mArgs.getString(PACKAGE_TO_LAUNCH);
         if (packageName != null) {
             Log.d(TAG, "Launching app " + packageName);
-            Collection<ProcessErrorStateInfo> err = launchActivity(packageName);
+            Intent intent = getLaunchIntentForPackage(packageName);
+            if (intent == null) {
+                Log.w(TAG, String.format("Skipping %s; no launch intent", packageName));
+                return;
+            }
+            ProcessErrorStateInfo err = launchActivity(packageName, intent);
             // Make sure there are no errors when launching the application,
             // otherwise raise an
             // exception with the first error encountered.
-            assertNull(getFirstError(err), err);
-            assertTrue("App crashed after launch.", processStillUp(packageName));
+            assertNull(getStackTrace(err), err);
+            try {
+                assertTrue("App crashed after launch.", processStillUp(packageName));
+            } finally {
+                returnHome();
+            }
         } else {
             Log.d(TAG, "Missing argument, use " + PACKAGE_TO_LAUNCH +
                     " to specify the package to launch");
@@ -110,20 +124,58 @@ public class AppCompatibility extends InstrumentationTestCase {
     }
 
     /**
-     * Gets the first error in collection and return the long message for it.
+     * Gets the stack trace for the error.
      *
-     * @param in {@link Collection} of {@link ProcessErrorStateInfo} to parse.
+     * @param in {@link ProcessErrorStateInfo} to parse.
      * @return {@link String} the long message of the error.
      */
-    private String getFirstError(Collection<ProcessErrorStateInfo> in) {
+    private String getStackTrace(ProcessErrorStateInfo in) {
         if (in == null) {
             return null;
+        } else {
+            return in.stackTrace;
         }
-        ProcessErrorStateInfo err = in.iterator().next();
-        if (err != null) {
-            return err.stackTrace;
+    }
+
+    /**
+     * Returns the process name that the package is going to use.
+     *
+     * @param packageName name of the package
+     * @return process name of the package
+     */
+    private String getProcessName(String packageName) {
+        try {
+            PackageInfo pi = mPackageManager.getPackageInfo(packageName, 0);
+            return pi.applicationInfo.processName;
+        } catch (NameNotFoundException e) {
+            return packageName;
         }
-        return null;
+    }
+
+    private void returnHome() {
+        Intent homeIntent = new Intent(Intent.ACTION_MAIN);
+        homeIntent.addCategory(Intent.CATEGORY_HOME);
+        homeIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        // Send the "home" intent and wait 2 seconds for us to get there
+        mContext.startActivity(homeIntent);
+        try {
+            Thread.sleep(mWorkspaceLaunchTimeout);
+        } catch (InterruptedException e) {
+            // ignore
+        }
+    }
+
+    private Intent getLaunchIntentForPackage(String packageName) {
+        UiModeManager umm = (UiModeManager)
+                getInstrumentation().getContext().getSystemService(Context.UI_MODE_SERVICE);
+        boolean isLeanback = umm.getCurrentModeType() == Configuration.UI_MODE_TYPE_TELEVISION;
+        Intent intent = null;
+        if (isLeanback) {
+            intent = mPackageManager.getLeanbackLaunchIntentForPackage(packageName);
+        } else {
+            intent = mPackageManager.getLaunchIntentForPackage(packageName);
+        }
+        return intent;
     }
 
     /**
@@ -134,28 +186,11 @@ public class AppCompatibility extends InstrumentationTestCase {
      * @return {@link Collection} of {@link ProcessErrorStateInfo} detected
      *         during the app launch.
      */
-    private Collection<ProcessErrorStateInfo> launchActivity(String packageName) {
-        Intent homeIntent = new Intent(Intent.ACTION_MAIN);
-        homeIntent.addCategory(Intent.CATEGORY_HOME);
-        homeIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+    private ProcessErrorStateInfo launchActivity(String packageName, Intent intent) {
+        Log.d(TAG, String.format("launching package \"%s\" with intent: %s",
+                packageName, intent.toString()));
 
-        Intent intent = mPackageManager.getLaunchIntentForPackage(packageName);
-        // Skip if the apk does not have a launch intent.
-        if (intent == null) {
-            Log.d(TAG, "Skipping " + packageName + "; missing launch intent");
-            return null;
-        }
-
-        // We check for any Crash or ANR dialogs that are already up, and we
-        // ignore them. This is
-        // so that we don't report crashes that were caused by prior apps (which
-        // those particular
-        // tests should have caught and reported already). Otherwise, test
-        // failures would cascade
-        // from the initial broken app to many/all of the tests following that
-        // app's launch.
-        final Collection<ProcessErrorStateInfo> preErr =
-                mActivityManager.getProcessesInErrorState();
+        String processName = getProcessName(packageName);
 
         // Launch Activity
         mContext.startActivity(intent);
@@ -166,26 +201,20 @@ public class AppCompatibility extends InstrumentationTestCase {
             // ignore
         }
 
-        // Send the "home" intent and wait 2 seconds for us to get there
-        mContext.startActivity(homeIntent);
-        try {
-            Thread.sleep(mWorkspaceLaunchTimeout);
-        } catch (InterruptedException e) {
-            // ignore
-        }
-
-        // See if there are any errors. We wait until down here to give ANRs as
-        // much time as
+        // See if there are any errors. We wait until down here to give ANRs as much time as
         // possible to occur.
         final Collection<ProcessErrorStateInfo> postErr =
                 mActivityManager.getProcessesInErrorState();
-        // Take the difference between the error processes we see now, and the
-        // ones that were
-        // present when we started
-        if (preErr != null && postErr != null) {
-            postErr.removeAll(preErr);
+
+        if (postErr == null) {
+            return null;
         }
-        return postErr;
+        for (ProcessErrorStateInfo error : postErr) {
+            if (error.processName.equals(processName)) {
+                return error;
+            }
+        }
+        return null;
     }
 
     /**
@@ -195,21 +224,12 @@ public class AppCompatibility extends InstrumentationTestCase {
      * @return True if package is running, false otherwise.
      */
     private boolean processStillUp(String packageName) {
-        try {
-            PackageInfo packageInfo = mPackageManager.getPackageInfo(packageName, 0);
-            String processName = packageInfo.applicationInfo.processName;
-            List<RunningAppProcessInfo> runningApps = mActivityManager.getRunningAppProcesses();
-            for (RunningAppProcessInfo app : runningApps) {
-                if (app.processName.equalsIgnoreCase(processName)) {
-                    Log.d(TAG, "Found process " + app.processName);
-                    return true;
-                }
+        @SuppressWarnings("deprecation")
+        List<RunningTaskInfo> infos = mActivityManager.getRunningTasks(100);
+        for (RunningTaskInfo info : infos) {
+            if (info.baseActivity.getPackageName().equals(packageName)) {
+                return true;
             }
-            Log.d(TAG, "Failed to find process " + processName + " with package name "
-                    + packageName);
-        } catch (NameNotFoundException e) {
-            Log.w(TAG, "Failed to find package " + packageName);
-            return false;
         }
         return false;
     }

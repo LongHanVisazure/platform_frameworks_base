@@ -19,16 +19,18 @@
 
 #include "Debug.h"
 #include "Layer.h"
-#include "utils/SortedList.h"
+
+#include <set>
 
 namespace android {
 namespace uirenderer {
+
+class RenderState;
 
 ///////////////////////////////////////////////////////////////////////////////
 // Defines
 ///////////////////////////////////////////////////////////////////////////////
 
-// Debug
 #if DEBUG_LAYERS
     #define LAYER_LOGD(...) ALOGD(__VA_ARGS__)
 #else
@@ -55,7 +57,7 @@ public:
      * @param width The desired width of the layer
      * @param height The desired height of the layer
      */
-    Layer* get(const uint32_t width, const uint32_t height);
+    Layer* get(RenderState& renderState, const uint32_t width, const uint32_t height);
 
     /**
      * Adds the layer to the cache. The layer will not be added if there is
@@ -85,6 +87,8 @@ public:
      */
     uint32_t getSize();
 
+    size_t getCount();
+
     /**
      * Prints out the content of the cache.
      */
@@ -93,15 +97,15 @@ public:
 private:
     struct LayerEntry {
         LayerEntry():
-            mLayer(NULL), mWidth(0), mHeight(0) {
+            mLayer(nullptr), mWidth(0), mHeight(0) {
         }
 
-        LayerEntry(const uint32_t layerWidth, const uint32_t layerHeight): mLayer(NULL) {
+        LayerEntry(const uint32_t layerWidth, const uint32_t layerHeight): mLayer(nullptr) {
             mWidth = Layer::computeIdealWidth(layerWidth);
             mHeight = Layer::computeIdealHeight(layerHeight);
         }
 
-        LayerEntry(Layer* layer):
+        explicit LayerEntry(Layer* layer):
             mLayer(layer), mWidth(layer->getWidth()), mHeight(layer->getHeight()) {
         }
 
@@ -115,12 +119,8 @@ private:
             return compare(*this, other) != 0;
         }
 
-        friend inline int strictly_order_type(const LayerEntry& lhs, const LayerEntry& rhs) {
-            return LayerEntry::compare(lhs, rhs) < 0;
-        }
-
-        friend inline int compare_type(const LayerEntry& lhs, const LayerEntry& rhs) {
-            return LayerEntry::compare(lhs, rhs);
+        bool operator<(const LayerEntry& other) const {
+            return LayerEntry::compare(*this, other) < 0;
         }
 
         Layer* mLayer;
@@ -130,7 +130,7 @@ private:
 
     void deleteLayer(Layer* layer);
 
-    SortedList<LayerEntry> mCache;
+    std::multiset<LayerEntry> mCache;
 
     uint32_t mSize;
     uint32_t mMaxSize;

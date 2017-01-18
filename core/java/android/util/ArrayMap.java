@@ -16,6 +16,8 @@
 
 package android.util;
 
+import libcore.util.EmptyArray;
+
 import java.util.Collection;
 import java.util.Map;
 import java.util.Set;
@@ -58,9 +60,14 @@ public final class ArrayMap<K, V> implements Map<K, V> {
     private static final int CACHE_SIZE = 10;
 
     /**
+     * Special hash array value that indicates the container is immutable.
+     */
+    static final int[] EMPTY_IMMUTABLE_INTS = new int[0];
+
+    /**
      * @hide Special immutable empty ArrayMap.
      */
-    public static final ArrayMap EMPTY = new ArrayMap(true);
+    public static final ArrayMap EMPTY = new ArrayMap<>(-1);
 
     /**
      * Caches of small array objects to avoid spamming garbage.  The cache
@@ -73,11 +80,7 @@ public final class ArrayMap<K, V> implements Map<K, V> {
     static Object[] mTwiceBaseCache;
     static int mTwiceBaseCacheSize;
 
-    /**
-     * Special hash array value that indicates the container is immutable.
-     */
-    static final int[] EMPTY_IMMUTABLE_INTS = new int[0];
-
+    final boolean mIdentityHashCode;
     int[] mHashes;
     Object[] mArray;
     int mSize;
@@ -234,34 +237,39 @@ public final class ArrayMap<K, V> implements Map<K, V> {
      * will grow once items are added to it.
      */
     public ArrayMap() {
-        mHashes = ContainerHelpers.EMPTY_INTS;
-        mArray = ContainerHelpers.EMPTY_OBJECTS;
-        mSize = 0;
+        this(0, false);
     }
 
     /**
      * Create a new ArrayMap with a given initial capacity.
      */
     public ArrayMap(int capacity) {
-        if (capacity == 0) {
-            mHashes = ContainerHelpers.EMPTY_INTS;
-            mArray = ContainerHelpers.EMPTY_OBJECTS;
+        this(capacity, false);
+    }
+
+    /** {@hide} */
+    public ArrayMap(int capacity, boolean identityHashCode) {
+        mIdentityHashCode = identityHashCode;
+
+        // If this is immutable, use the sentinal EMPTY_IMMUTABLE_INTS
+        // instance instead of the usual EmptyArray.INT. The reference
+        // is checked later to see if the array is allowed to grow.
+        if (capacity < 0) {
+            mHashes = EMPTY_IMMUTABLE_INTS;
+            mArray = EmptyArray.OBJECT;
+        } else if (capacity == 0) {
+            mHashes = EmptyArray.INT;
+            mArray = EmptyArray.OBJECT;
         } else {
             allocArrays(capacity);
         }
         mSize = 0;
     }
 
-    private ArrayMap(boolean immutable) {
-        mHashes = EMPTY_IMMUTABLE_INTS;
-        mArray = ContainerHelpers.EMPTY_OBJECTS;
-        mSize = 0;
-    }
-
     /**
      * Create a new ArrayMap with the mappings from the given ArrayMap.
      */
-    public ArrayMap(ArrayMap map) {
+    public ArrayMap(ArrayMap<K, V> map) {
         this();
         if (map != null) {
             putAll(map);
@@ -275,8 +283,8 @@ public final class ArrayMap<K, V> implements Map<K, V> {
     public void clear() {
         if (mSize > 0) {
             freeArrays(mHashes, mArray, mSize);
-            mHashes = ContainerHelpers.EMPTY_INTS;
-            mArray = ContainerHelpers.EMPTY_OBJECTS;
+            mHashes = EmptyArray.INT;
+            mArray = EmptyArray.OBJECT;
             mSize = 0;
         }
     }
@@ -321,7 +329,18 @@ public final class ArrayMap<K, V> implements Map<K, V> {
      */
     @Override
     public boolean containsKey(Object key) {
-        return key == null ? (indexOfNull() >= 0) : (indexOf(key, key.hashCode()) >= 0);
+        return indexOfKey(key) >= 0;
+    }
+
+    /**
+     * Returns the index of a key in the set.
+     *
+     * @param key The key to search for.
+     * @return Returns the index of the key if it exists, else a negative integer.
+     */
+    public int indexOfKey(Object key) {
+        return key == null ? indexOfNull()
+                : indexOf(key, mIdentityHashCode ? System.identityHashCode(key) : key.hashCode());
     }
 
     int indexOfValue(Object value) {
@@ -363,7 +382,7 @@ public final class ArrayMap<K, V> implements Map<K, V> {
      */
     @Override
     public V get(Object key) {
-        final int index = key == null ? indexOfNull() : indexOf(key, key.hashCode());
+        final int index = indexOfKey(key);
         return index >= 0 ? (V)mArray[(index<<1)+1] : null;
     }
 
@@ -408,7 +427,7 @@ public final class ArrayMap<K, V> implements Map<K, V> {
 
     /**
      * Add a new value to the array map.
-     * @param key The key under which to store the value.  <b>Must not be null.</b>  If
+     * @param key The key under which to store the value.  If
      * this key already exists in the array, its value will be replaced.
      * @param value The value to store for the given key.
      * @return Returns the old value that was stored for the given key, or null if there
@@ -422,7 +441,7 @@ public final class ArrayMap<K, V> implements Map<K, V> {
             hash = 0;
             index = indexOfNull();
         } else {
-            hash = key.hashCode();
+            hash = mIdentityHashCode ? System.identityHashCode(key) : key.hashCode();
             index = indexOf(key, hash);
         }
         if (index >= 0) {
@@ -473,7 +492,8 @@ public final class ArrayMap<K, V> implements Map<K, V> {
      */
     public void append(K key, V value) {
         int index = mSize;
-        final int hash = key == null ? 0 : key.hashCode();
+        final int hash = key == null ? 0
+                : (mIdentityHashCode ? System.identityHashCode(key) : key.hashCode());
         if (index >= mHashes.length) {
             throw new IllegalStateException("Array is full");
         }
@@ -491,6 +511,44 @@ public final class ArrayMap<K, V> implements Map<K, V> {
         index <<= 1;
         mArray[index] = key;
         mArray[index+1] = value;
+    }
+
+    /**
+     * The use of the {@link #append} function can result in invalid array maps, in particular
+     * an array map where the same key appears multiple times.  This function verifies that
+     * the array map is valid, throwing IllegalArgumentException if a problem is found.  The
+     * main use for this method is validating an array map after unpacking from an IPC, to
+     * protect against malicious callers.
+     * @hide
+     */
+    public void validate() {
+        final int N = mSize;
+        if (N <= 1) {
+            // There can't be dups.
+            return;
+        }
+        int basehash = mHashes[0];
+        int basei = 0;
+        for (int i=1; i<N; i++) {
+            int hash = mHashes[i];
+            if (hash != basehash) {
+                basehash = hash;
+                basei = i;
+                continue;
+            }
+            // We are in a run of entries with the same hash code.  Go backwards through
+            // the array to see if any keys are the same.
+            final Object cur = mArray[i<<1];
+            for (int j=i-1; j>=basei; j--) {
+                final Object prev = mArray[j<<1];
+                if (cur == prev) {
+                    throw new IllegalArgumentException("Duplicate key in ArrayMap: " + cur);
+                }
+                if (cur != null && prev != null && cur.equals(prev)) {
+                    throw new IllegalArgumentException("Duplicate key in ArrayMap: " + cur);
+                }
+            }
+        }
     }
 
     /**
@@ -521,7 +579,7 @@ public final class ArrayMap<K, V> implements Map<K, V> {
      */
     @Override
     public V remove(Object key) {
-        int index = key == null ? indexOfNull() : indexOf(key, key.hashCode());
+        final int index = indexOfKey(key);
         if (index >= 0) {
             return removeAt(index);
         }
@@ -540,8 +598,8 @@ public final class ArrayMap<K, V> implements Map<K, V> {
             // Now empty.
             if (DEBUG) Log.d(TAG, "remove: shrink from " + mHashes.length + " to 0");
             freeArrays(mHashes, mArray, mSize);
-            mHashes = ContainerHelpers.EMPTY_INTS;
-            mArray = ContainerHelpers.EMPTY_OBJECTS;
+            mHashes = EmptyArray.INT;
+            mArray = EmptyArray.OBJECT;
             mSize = 0;
         } else {
             if (mHashes.length > (BASE_SIZE*2) && mSize < mHashes.length/3) {
@@ -707,7 +765,7 @@ public final class ArrayMap<K, V> implements Map<K, V> {
 
                 @Override
                 protected int colIndexOfKey(Object key) {
-                    return key == null ? indexOfNull() : indexOf(key, key.hashCode());
+                    return indexOfKey(key);
                 }
 
                 @Override
@@ -790,7 +848,8 @@ public final class ArrayMap<K, V> implements Map<K, V> {
      * in the array map.
      *
      * <p><b>Note:</b> this is a very inefficient way to access the array contents, it
-     * requires generating a number of temporary objects.</p>
+     * requires generating a number of temporary objects and allocates additional state
+     * information associated with the container that will remain for the life of the container.</p>
      *
      * <p><b>Note:</b></p> the semantics of this
      * Set are subtly different than that of a {@link java.util.HashMap}: most important,
@@ -808,7 +867,8 @@ public final class ArrayMap<K, V> implements Map<K, V> {
      * in the array map.
      *
      * <p><b>Note:</b> this is a fairly inefficient way to access the array contents, it
-     * requires generating a number of temporary objects.</p>
+     * requires generating a number of temporary objects and allocates additional state
+     * information associated with the container that will remain for the life of the container.</p>
      */
     @Override
     public Set<K> keySet() {
@@ -820,7 +880,8 @@ public final class ArrayMap<K, V> implements Map<K, V> {
      * in the array map.
      *
      * <p><b>Note:</b> this is a fairly inefficient way to access the array contents, it
-     * requires generating a number of temporary objects.</p>
+     * requires generating a number of temporary objects and allocates additional state
+     * information associated with the container that will remain for the life of the container.</p>
      */
     @Override
     public Collection<V> values() {
